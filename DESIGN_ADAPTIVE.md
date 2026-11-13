@@ -96,6 +96,8 @@ Phần này được bổ sung sau khi rà soát commit `6ddac91`. Các mục d�
 
 Hệ thống không có đường phục hồi ngoài khởi động lại. Một block của A bị hỏng metadata cũng làm `ah_alloc(AH_B, ...)` trả `CORRUPT` ở cả STATIC và ADAPTIVE. Điều này mâu thuẫn với mục tiêu bảo vệ B khỏi lỗi của A.
 
+*Cập nhật: đã cài trên nhánh `minh/d10-region-isolation`, commit `ecace7a`; chi tiết trong `CHANGES_MINH.md`.*
+
 Đề xuất: kiểm tra bất biến theo từng vùng; đánh dấu và cách ly vùng hỏng trong khi các vùng khác tiếp tục hoạt động; bổ sung reset theo nhóm (`ah_reset_group`), tương tự cơ chế reset từng heap của luận văn baseline. Phần khó là block của nhóm bị reset nằm trong vùng chung, vì vùng chung chứa block của nhiều nhóm. Kiểm thử cần có: sau khi vùng của A hỏng, B vẫn cấp phát và giải phóng được trong vùng riêng của B.
 
 ### 2. Kịch bản hiện tại không phân biệt ADAPTIVE với heap chung có quota

@@ -8,6 +8,7 @@ File này ghi lại **mọi commit Minh thêm vào trên code của Tùng**, đ�
 |---|---|
 | Code gốc của Tùng | commit `6ddac91` "Adaptive Multi-Heap + Memory QoS + OOM Fault Injection Instruction" (13/11/2026, 11:12) |
 | Nhánh của Minh | `minh/d1-validate-flag`, tách từ `6ddac91` |
+| Nhánh Đ10 | `minh/d10-region-isolation`, tách từ `minh/d1-validate-flag` (gồm luôn commit 1–3). Xem riêng phần Đ10: `git diff minh/d1-validate-flag..minh/d10-region-isolation` |
 | Cách xem toàn bộ thay đổi | `git diff 6ddac91..minh/d1-validate-flag` |
 | Nhánh `main` của Tùng | **Chưa bị đụng tới.** Mọi thay đổi chỉ nằm trên nhánh của Minh |
 
@@ -17,7 +18,9 @@ File này ghi lại **mọi commit Minh thêm vào trên code của Tùng**, đ�
 |---|---|---|---|---|
 | 1 | `8263bb4` | 13/11/2026 | Tuỳ chọn bỏ validate trong `ah_alloc`/`ah_free` khi đo độ trễ (Đ1) | **Không.** Tuỳ chọn mặc định tắt |
 | 2 | `8b97de8` | 13/11/2026 | Thêm mục "Đề xuất cải tiến" vào cuối `DESIGN_ADAPTIVE.md` | Không, chỉ là tài liệu |
-| 3 | (commit thêm file này) | 13/11/2026 | Thêm `CHANGES_MINH.md` | Không, chỉ là tài liệu |
+| 3 | `d360552` | 13/11/2026 | Thêm `CHANGES_MINH.md` | Không, chỉ là tài liệu |
+| 4 | `ecace7a` | 13/11/2026 | Cô lập lỗi theo vùng: guard, cách ly vùng hỏng, `ah_reset_group` (Đ10). Nhánh `minh/d10-region-isolation` | **Có**, xem mục commit 4 |
+| 5 | (commit ghi mục này) | 13/11/2026 | Ghi commit 4 vào file này và vào `DESIGN_ADAPTIVE.md` | Không, chỉ là tài liệu |
 
 ---
 
@@ -71,8 +74,59 @@ Mục 1, 2, 4, 5 **chưa có code**, cần thống nhất ai làm.
 
 ---
 
+## Commit 4 — `ecace7a`: cô lập lỗi theo vùng (Đ10)
+
+Nhánh `minh/d10-region-isolation`, tách từ `minh/d1-validate-flag`.
+
+**Vấn đề ở `6ddac91`.** `validate_locked()` kiểm tra cả arena, và chỉ cần một chỗ hỏng là mọi API đều trả `AH_CORRUPT`. Ở ADAPTIVE, A ghi tràn đúng 1 byte sang header đầu tiên của vùng B. Sau đó B cấp phát trong vùng riêng của mình cũng `CORRUPT`, và `ah_reset` cũng `CORRUPT`, không còn cách cứu nào ngoài khởi động lại. Như vậy lỗi của A làm B chết theo, trái với mục tiêu cô lập lỗi của đề tài.
+
+**Đã sửa:**
+
+| Thay đổi | Chi tiết |
+|---|---|
+| Guard cuối mỗi vùng | 16 byte (`AH_GUARD_BYTES`) mẫu cố định ở cuối mỗi vùng, **tính trong** vùng nên tổng RAM vẫn 8192. Ghi tràn ngắn khỏi vùng A sẽ hỏng guard của A, không hỏng header vùng B, nên lỗi được quy cho A |
+| Kiểm tra theo vùng | `ah_alloc` chỉ kiểm tra vùng nó cần: vùng riêng, cộng vùng chung khi phải mượn. `ah_free` chỉ kiểm tra vùng chứa con trỏ |
+| Cách ly vùng hỏng | Vùng hỏng bị đánh dấu `faulted`. Lời gọi cần vùng đó trả `AH_CORRUPT`, các vùng khác chạy tiếp. Số byte mỗi nhóm giữ trong từng vùng được lưu **ngoài** arena, nên vùng hỏng không làm sai được con số này |
+| `ah_reset_group(g)` (API mới) | Vùng lành: gỡ từng block của g, block của nhóm kia giữ nguyên. Vùng bị cách ly: bỏ phần của g mà không duyệt danh sách, và dựng lại vùng khi không nhóm nào còn byte ở đó. Mọi con trỏ của g mất hiệu lực, nên task của g phải dừng hoặc khởi động lại quanh lời gọi này (giống ý "reset heap + restart task" của luận văn) |
+| `ah_reset(policy)` | Không còn trả `CORRUPT`. Chỉ trả `BUSY` khi còn byte sống, kể cả byte kẹt trong vùng bị cách ly: phải `ah_reset_group` các nhóm đó trước |
+| Thống kê | `ah_stats_t` thêm `guard_bytes`, `faulted_regions` (bit i là vùng i). `ah_group_stats_t` thêm `corrupt_failures` và `group_resets`. `ah_get_stats` điền số liệu cả khi trả `AH_CORRUPT` |
+| `main/experiments.c` | Công thức sức chứa trừ guard. Số buffer mỗi kịch bản **không đổi** (đã so trên native: bảng của `scenario_probe` giống hệt trước) |
+| `main/allocator_tests.c` | Self-test mới `region_isolation_and_group_reset` cho STATIC và ADAPTIVE: A cố ý ghi tràn 1 byte, B vẫn cấp phát, giải phóng và mượn được, dữ liệu B còn nguyên, `ah_reset_group(A)` phục hồi A |
+| `tools/analyze_results.py` | Thêm tên self-test mới vào danh sách bắt buộc |
+
+**Hành vi sau sửa** (cùng phép thử như trước, A ghi tràn 1 byte khỏi vùng riêng):
+
+| Thao tác sau sự cố | `6ddac91` | Sau Đ10 |
+|---|---|---|
+| B cấp phát trong vùng riêng | `CORRUPT` | **OK** |
+| B mượn vùng chung (ADAPTIVE) | `CORRUPT` | **OK** |
+| A cấp phát / giải phóng | `CORRUPT` | `CORRUPT` (đúng: A là nhóm gây lỗi) |
+| Phục hồi | Không có, phải khởi động lại | `ah_reset_group(A)` |
+
+**Giới hạn còn lại:**
+
+- Ghi tràn **dài hơn 16 byte** vẫn vượt guard và chạm vùng kế bên. Lỗi vẫn bị phát hiện, nhưng cả hai vùng bị cách ly.
+- Hỏng **trong vùng chung** (ADAPTIVE) chặn việc mượn của cả hai nhóm cho tới khi cả hai reset phần của mình. Phần dự trữ của mỗi nhóm vẫn dùng được.
+- **SHARED** vẫn không cô lập, vì chỉ có một vùng. Đây là cấu hình đối chứng, cố ý giữ nguyên.
+- Lỗi chỉ được phát hiện khi có ai kiểm tra vùng đó. Ở chế độ đo của Đ1, `ah_alloc`/`ah_free` không tự kiểm tra, nên phải chờ `ah_validate()` ở cuối lượt.
+
+**Đã kiểm chứng (native trên PC, không phải bo):**
+
+- Self-test của repo, gồm cả test mới: PASS ở cả hai chế độ validate.
+- `isolation_test` mới, 5 nhóm tình huống (STATIC, ADAPTIVE, hỏng vùng chung, SHARED đối chứng, ghi tràn dài hơn guard), cùng `ah_reset_group` trên vùng lành ở cả 3 policy: PASS.
+- Fuzz 1000 seed × 6000 bước × 3 policy (18 triệu thao tác), có gọi `ah_reset_group` ngẫu nhiên và kiểm tra dữ liệu của nhóm kia sau mỗi lần: PASS.
+- Mutation: cho allocator quay lại kiểm tra cả arena như `6ddac91` thì `isolation_test` FAIL ngay. Vậy test thật sự kiểm được tính cô lập.
+
+**Chưa kiểm chứng, nhờ Tùng:**
+
+- [ ] `idf.py build` (máy Minh chưa có ESP-IDF).
+- [ ] Chạy suite trên bo: self-test `region_isolation_and_group_reset` phải PASS, 36 case phải PASS như cũ.
+
+---
+
 ## Cần Tùng trả lời
 
 - Còn code nào chưa push lên GitHub không? (GitHub hiện chỉ có `6ddac91`.)
 - Muốn nhận code bằng pull request, hay tự kéo nhánh từ repo của Minh?
 - Ai làm mục 1 (cô lập lỗi theo vùng) và phần criticality + thu hồi theo áp lực?
+- *(Bổ sung sau commit 4.)* Mục 1 Minh đã làm ở nhánh `minh/d10-region-isolation`. Tùng xem thiết kế guard + `ah_reset_group` có ổn không, nhất là việc guard lấy 16 byte trong mỗi vùng.
