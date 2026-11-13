@@ -153,10 +153,12 @@ static bool run_case(ah_policy_t selected, const scenario_t *scenario, unsigned 
         ESP_LOGE(TAG, "Timeout: stop without resetting storage in use"); return false;
     }
     bool passed = finish_is_clean(&initial, &final);
-    /* Verify allocation counts against region capacity and the injection interval. */
-    const unsigned capacity_a = selected == AH_SHARED ? 8192 / (256 + initial.header_bytes) :
-        selected == AH_STATIC ? 4096 / (256 + initial.header_bytes) :
-        2048 / (256 + initial.header_bytes) + 4096 / (256 + initial.header_bytes);
+    /* Verify allocation counts against region capacity and the injection interval.
+     * Each region ends with guard_bytes that cannot be allocated. */
+    const unsigned unit = 256 + (unsigned)initial.header_bytes, guard = (unsigned)initial.guard_bytes;
+    const unsigned capacity_a = selected == AH_SHARED ? (8192 - guard) / unit :
+        selected == AH_STATIC ? (4096 - guard) / unit :
+        (2048 - guard) / unit + (4096 - guard) / unit;
     unsigned valid_a = scenario->a_requests - (scenario->inject_every ? scenario->a_requests / scenario->inject_every : 0);
     passed &= measured[AH_A].ok == (valid_a < capacity_a ? valid_a : capacity_a);
     if (!scenario->inject_every) {

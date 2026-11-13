@@ -10,7 +10,8 @@ RESULT_FIELDS = "policy scenario run a_ok b_ok a_no_memory b_no_memory a_quota b
 TIMING_FIELDS = "policy scenario run group alloc_calls alloc_us_sum alloc_us_max free_calls free_us_sum free_us_max".split()
 POLICIES = ("SHARED", "STATIC", "ADAPTIVE")
 SCENARIOS = ("NORMAL", "BURST", "PRESSURE", "INJECTED")
-TESTS = {"api_pointer_alignment_exact_fit", "fragmentation_and_coalescing", "borrow_return_quota_injection"}
+TESTS = {"api_pointer_alignment_exact_fit", "fragmentation_and_coalescing", "borrow_return_quota_injection",
+         "region_isolation_and_group_reset"}
 TESTS |= {f"random_{p}_4000_seed_1234ABCD" for p in POLICIES}
 TESTS |= {f"smp_{p}_2000_allocations" for p in POLICIES}
 

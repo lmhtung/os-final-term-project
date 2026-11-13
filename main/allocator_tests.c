@@ -80,6 +80,35 @@ bool allocator_tests_run(void)
     REQUIRE(ah_validate() == AH_OK);
     ESP_LOGI(TAG, "TEST,borrow_return_quota_injection,PASS");
 
+    /* A overruns its own region by one byte. B must keep working in its region (and keep
+     * borrowing under ADAPTIVE); only A is refused, and ah_reset_group(A) recovers it. */
+    for (int mode = AH_STATIC; mode <= AH_ADAPTIVE; ++mode) {
+        void *kept = NULL;
+        REQUIRE(ah_reset((ah_policy_t)mode) == AH_OK);
+        REQUIRE(ah_get_stats(&start) == AH_OK);
+        const size_t whole = (mode == AH_STATIC ? 4096 : 2048) - start.guard_bytes - start.header_bytes;
+        REQUIRE(ah_alloc(AH_A, whole, &p) == AH_OK);
+        REQUIRE(ah_get_stats(&now) == AH_OK && now.group[AH_A].borrowed_bytes == 0);
+        REQUIRE(ah_alloc(AH_B, 64, &kept) == AH_OK);
+        memset(kept, 0x3C, 64);
+        ((unsigned char *)p)[whole] ^= 0xFF; /* deliberate overrun into A's guard */
+        REQUIRE(ah_alloc(AH_B, 64, &q) == AH_OK && ah_free(AH_B, q) == AH_OK);
+        REQUIRE(ah_validate() == AH_CORRUPT);
+        REQUIRE(ah_get_stats(&now) == AH_CORRUPT && now.faulted_regions == 1u << AH_A);
+        REQUIRE(ah_alloc(AH_A, 64, &q) == AH_CORRUPT && q == NULL);
+        REQUIRE(ah_free(AH_A, p) == AH_CORRUPT);
+        REQUIRE(ah_alloc(AH_B, 64, &q) == AH_OK && ah_free(AH_B, q) == AH_OK);
+        if (mode == AH_ADAPTIVE) REQUIRE(ah_alloc(AH_B, 3000, &q) == AH_OK && ah_free(AH_B, q) == AH_OK);
+        REQUIRE(ah_reset((ah_policy_t)mode) == AH_BUSY);
+        REQUIRE(ah_reset_group(AH_A) == AH_OK && ah_validate() == AH_OK);
+        REQUIRE(ah_get_stats(&now) == AH_OK && now.faulted_regions == 0 && now.group[AH_A].live_bytes == 0);
+        REQUIRE(now.group[AH_A].corrupt_failures == 1 && now.group[AH_B].corrupt_failures == 0);
+        REQUIRE(pattern(kept, 64, 0x3C) && ah_free(AH_B, kept) == AH_OK);
+        REQUIRE(ah_alloc(AH_A, whole, &p) == AH_OK && ah_free(AH_A, p) == AH_OK);
+        REQUIRE(ah_get_stats(&now) == AH_OK && now.free_payload_bytes == start.free_payload_bytes);
+    }
+    ESP_LOGI(TAG, "TEST,region_isolation_and_group_reset,PASS");
+
     /* A fixed seed and bounded pointer table make variable-size workloads repeatable. */
     for (int mode = AH_SHARED; mode <= AH_ADAPTIVE; ++mode) {
         REQUIRE(ah_reset((ah_policy_t)mode) == AH_OK);
