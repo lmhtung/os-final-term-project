@@ -1,4 +1,4 @@
-"""Parser tests only. In-memory fixtures are NOT ESP32 experimental results."""
+"""Validate log parsing with in-memory fixtures independent of board measurements."""
 import unittest
 from analyze_results import parse_log, POLICIES, SCENARIOS, TESTS
 

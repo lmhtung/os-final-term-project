@@ -1,91 +1,70 @@
-# Demo cô lập cạn bộ nhớ trên ESP32-S3
+# Thực nghiệm cô lập cạn bộ nhớ bằng pool khối cố định
 
-> Tài liệu này dành cho **demo cũ khối cố định**. Firmware mặc định hiện chạy bộ thử adaptive kích thước biến đổi; xem `README.md`. Muốn chạy lại demo cũ, bật `APP_LEGACY_POOL_DEMO` trong SDK Configuration Editor rồi build và nạp lại.
+## Bài toán và mục tiêu
 
-## Mục đích và trạng thái
+Một nhóm tác vụ có thể chiếm hết pool dùng chung, khiến nhóm khác không lấy được bộ nhớ. Thực nghiệm so sánh pool dùng chung với pool chia ngân sách để minh họa khả năng cô lập cạn bộ nhớ giữa hai nhóm A và B.
 
-Demo minh họa ảnh hưởng của việc phân chia ngân sách bộ nhớ giữa hai nhóm task. Chương trình chạy trực tiếp trên ESP32-S3, in kết quả qua UART. Không sử dụng mô phỏng.
+Chương trình chạy trực tiếp trên ESP32-S3 với ESP-IDF v6.1 và xuất log qua UART. Mỗi lần cấp phát thành công trả về một block 256 byte. Arena dữ liệu có 8192 byte RAM nội; metadata, mutex, semaphore, stack và TCB nằm ngoài arena. Tổng RAM của firmware lớn hơn dung lượng arena.
 
-Đây là **pool các khối cố định 256 byte**, chưa phải allocator kích thước biến đổi trong báo cáo `hdh`. Chưa có first-fit trên các khối kích thước khác nhau, tách/gộp khối hay phép đo phân mảnh và độ trễ. Không thay thế `malloc()` hoặc heap hệ thống của ESP-IDF.
+Chế độ này được chọn bằng `CONFIG_APP_LEGACY_POOL_DEMO`. Suite cấp phát kích thước biến đổi được mô tả trong [README.md](README.md).
 
-Chỉ vùng dữ liệu ứng dụng 8192 byte được đưa vào thí nghiệm. Metadata, mutex, semaphore, stack và TCB của hai task được cấp tĩnh riêng bên ngoài vùng này. Vì vậy 8 KiB không phải tổng RAM mà firmware sử dụng. PSRAM không cần thiết cho demo này.
+## Tổ chức pool và cơ chế bảo vệ
 
-Đã kiểm tra build thành công bằng ESP-IDF v6.1 cho ESP32-S3: firmware `build/os-btl.bin` có kích thước 173264 byte. Linker map xác nhận arena 8192 byte trong RAM nội (địa chỉ 0x3fc95e60 ở bản build này). Cấu hình build hiện chọn flash 16 MB và chưa bật PSRAM. Build có các cảnh báo từ cấu hình/thư viện SDK, nhưng kết thúc với mã 0.
+Arena gồm 32 block căn chỉnh 16 byte. Metadata bên ngoài arena ghi trạng thái: 0 là trống, 1 thuộc A, 2 thuộc B.
 
-Chưa nạp hoặc chạy bản demo này trên bo trong phiên viết code. Chỉ ghi nhận demo đạt sau khi firmware được nạp và log thực tế có `DEMO PASS` cùng các kết quả bên dưới.
-
-## Các file
-
-- `main/main.c`: khởi tạo, hai task A/B, điều phối hai lượt thử, kiểm tra giải phóng và in kết quả.
-- `components/demo_pool/include/demo_pool.h`: giao diện và mã lỗi.
-- `components/demo_pool/demo_pool.c`: arena, trạng thái chủ sở hữu từng khối, giới hạn nhóm và mutex.
-
-## Cách hoạt động
-
-Arena có 32 khối, mỗi khối 256 byte, căn chỉnh 16 byte. Trạng thái khối nằm ngoài arena: 0 là trống, 1 thuộc A, 2 thuộc B.
-
-| Chế độ | Phạm vi nhóm A | Phạm vi nhóm B |
+| Chế độ | Phạm vi A | Phạm vi B |
 |---|---|---|
-| SHARED | Toàn bộ 32 khối | Toàn bộ 32 khối |
-| SPLIT | 16 khối đầu | 16 khối cuối |
+| SHARED | Toàn bộ 32 block | Toàn bộ 32 block |
+| SPLIT | 16 block đầu | 16 block cuối |
 
-Cả hai chế độ dùng cùng thuật toán quét trạng thái khối và cùng mutex. Mutex chung giúp bảo vệ metadata; demo không đánh giá lợi ích của khóa riêng mỗi heap hoặc mức song song giữa hai lõi. Hai task không được gán cố định vào hai lõi.
+Cả hai chế độ dùng thuật toán quét trạng thái và một mutex chung. API giải phóng kiểm tra địa chỉ đầu block và chủ sở hữu. Thay đổi chế độ bị từ chối khi còn block đang được sử dụng.
 
-Một lần khởi động tự chạy:
+## Trình tự thực nghiệm
 
-1. Chọn SHARED khi tất cả khối đang trống.
-2. Task A cấp phát đến khi nhận NULL, đồng thời ghi mẫu 0xA5 và giữ các khối.
-3. A báo cho B bằng semaphore. A chưa giải phóng lúc này.
-4. B thử lấy một khối. Nếu thành công, B ghi/kiểm tra mẫu 0x5A và trả khối. Nếu thất bại, B ghi nhận, không truy cập con trỏ NULL.
-5. B báo hoàn tất. A kiểm tra dữ liệu các khối mình giữ rồi giải phóng chúng.
-6. Kiểm tra số khối thu hồi, sau đó lặp lại với SPLIT trên chính arena đó.
-7. Chạy các kiểm tra giải phóng sai và bảo toàn trạng thái.
-8. In `DEMO PASS` hoặc `DEMO FAIL`. Hai worker chờ semaphore; không tự khởi động lại.
+1. Chọn SHARED khi toàn bộ block đang trống.
+2. A cấp phát đến khi nhận `NULL`, ghi mẫu `0xA5` và giữ các block.
+3. A dùng semaphore cho phép B thực hiện yêu cầu trong khi A vẫn giữ bộ nhớ.
+4. B thử cấp phát một block. Nếu thành công, B ghi và kiểm tra mẫu `0x5A`, sau đó giải phóng; nếu thất bại, B ghi nhận lỗi.
+5. Sau tín hiệu hoàn tất của B, A kiểm tra dữ liệu rồi giải phóng các block đang giữ.
+6. Kiểm tra thu hồi đủ 32 block và thực hiện cùng trình tự với SPLIT.
+7. Kiểm tra các thao tác giải phóng không hợp lệ và bảo toàn trạng thái.
+8. Xuất `DEMO PASS` hoặc `DEMO FAIL`. Hai worker chờ semaphore sau khi kết thúc.
 
-Thứ tự này là một kịch bản tạo cạn bộ nhớ có kiểm soát. Nó không đo xác suất lỗi hoặc hiệu năng của workload ngoài thực tế. Nếu một vòng quá 10 giây, chương trình báo lỗi và không chuyển chế độ trên bộ nhớ còn đang được sử dụng.
+Đây là tình huống cạn bộ nhớ có thứ tự xác định. Hai task không được gán cố định vào hai lõi. Nếu một vòng vượt 10 giây, chương trình báo lỗi và dừng chuyển chế độ trên vùng nhớ đang sử dụng.
 
-## Chạy bằng VS Code
+## Cách chạy
 
-1. Mở folder `B:\OS\os-btl`.
-2. Giữ cáp dữ liệu ở cổng **UART** của bo.
-3. Chạy `ESP-IDF: Select Port to Use` và chọn cổng COM của bo. Lần trước là COM7; kiểm tra lại nếu Windows thay đổi cổng.
-4. Chạy `ESP-IDF: Select Flash Method`, chọn **UART**.
-5. Build bằng `ESP-IDF: Build Your Project`.
-6. Đóng monitor/ứng dụng khác đang giữ cổng COM, rồi chạy `ESP-IDF: Flash Your Project`.
-7. Mở `ESP-IDF: Monitor Your Device`. Nếu đã bỏ lỡ log đầu, nhấn RESET/EN trên bo một lần khi monitor đang mở.
+### VS Code
 
-Nạp firmware sẽ ghi đè chương trình ứng dụng đang có trên bo. Không cần erase-flash, thay đổi partition table hoặc thiết lập JTAG cho demo này.
+1. Mở `B:\OS\os-btl`, kết nối bo qua cổng UART bằng cáp dữ liệu.
+2. Mở SDK Configuration Editor → **OS project demonstrations**.
+3. Bật `Run the original fixed-block pool demo` (`CONFIG_APP_LEGACY_POOL_DEMO`) và lưu cấu hình.
+4. Chọn cổng COM bằng **ESP-IDF: Select Port to Use**, chọn phương thức nạp UART.
+5. Build, đóng chương trình đang giữ COM, sau đó Flash và Monitor.
+6. Nhấn EN một lần khi monitor đã mở nếu cần thu log từ đầu.
 
-## Chạy bằng terminal ESP-IDF
-
-Mở terminal ESP-IDF đã kích hoạt môi trường, rồi chạy:
+### Terminal ESP-IDF
 
 ```powershell
 Set-Location -LiteralPath 'B:\OS\os-btl'
+idf.py menuconfig
 idf.py build
 idf.py -p COM7 flash monitor
 ```
 
-Thay COM7 nếu bo sử dụng cổng khác. Nếu PowerShell thông thường chưa nhận `idf.py`, mở terminal bằng lệnh `ESP-IDF: Open ESP-IDF Terminal` trong VS Code. Có thêm script build dành cho bản cài ESP-IDF v6.1 hiện tại trên máy:
+Trong `menuconfig`, bật chế độ pool theo mục trên. Sử dụng cổng COM thực tế của bo. Nếu terminal chưa nhận `idf.py`, mở **ESP-IDF: Open ESP-IDF Terminal** trong VS Code.
 
-```powershell
-Set-Location -LiteralPath 'B:\OS\os-btl'
-& .\tools\build_demo.ps1
-```
-
-Script đọc đường dẫn công cụ từ profile trên C, thiết lập biến môi trường trong tiến trình hiện tại và chỉ build; không gọi EIM để đồng bộ lựa chọn, không sửa cài đặt hay nạp firmware. Dùng các lệnh ESP-IDF trong VS Code để flash/monitor nếu terminal chưa nhận `idf.py`.
-
-Thoát monitor bằng `Ctrl+]`. Muốn chỉ mở lại monitor mà không nạp lại:
+Thoát monitor bằng `Ctrl+]`. Để chỉ mở monitor:
 
 ```powershell
 idf.py -p COM7 monitor
 ```
 
-Nếu mất kết nối, kiểm tra cổng COM và dây USB dữ liệu trước. Nếu không tự vào chế độ nạp, giữ BOOT, nhấn rồi thả RESET/EN, sau đó thả BOOT và thử nạp lại.
+Khi gặp lỗi kết nối, kiểm tra cổng COM, cáp dữ liệu và ứng dụng đang giữ cổng. Nếu bo không tự vào chế độ nạp, giữ BOOT, nhấn rồi thả EN, sau đó thả BOOT và thực hiện nạp.
 
-## Kết quả kỳ vọng — chưa phải số liệu đo
+## Kết quả kỳ vọng và cách diễn giải
 
-Bỏ qua timestamp và tiền tố log ESP-IDF; tìm các dòng chính:
+Các dòng dưới đây mô tả hành vi kỳ vọng. Kết quả thực nghiệm được ghi nhận từ log của bo:
 
 ```text
 [SHARED] A: allocated=32 blocks, next allocation=NO_MEMORY
@@ -97,41 +76,35 @@ Bỏ qua timestamp và tiền tố log ESP-IDF; tìm các dòng chính:
 [SPLIT] A_blocks=16 B_success=1 free_after_cleanup=32/32 RESULT=PASS
 ```
 
-`NO_MEMORY` của A và việc B thất bại ở SHARED là tình huống cố ý, không phải kết quả FAIL của demo. Vòng kiểm tra PASS khi hành vi đúng dự kiến, mẫu dữ liệu được giữ nguyên và thu hồi đủ 32 khối.
+Trong SHARED, A giữ toàn bộ 32 block nên B không cấp phát được. Trong SPLIT, A chỉ tiêu thụ 16 block của mình và B vẫn có thể lấy block từ phần riêng. Hai chế độ có cùng tổng dung lượng dữ liệu.
 
-Sau đó phải có PASS cho:
+`NO_MEMORY` của A và thất bại cấp phát của B trong SHARED là điều kiện chủ động tạo ra. Một lượt đạt PASS khi hành vi phù hợp điều kiện kiểm tra, dữ liệu giữ nguyên và thu hồi đủ 32 block.
 
-- `wrong owner rejected`: A cấp phát nhưng B yêu cầu giải phóng, bị từ chối.
-- `interior pointer rejected`: con trỏ lệch 1 byte, bị từ chối.
-- `outside pointer rejected`: con trỏ nằm ngoài arena, bị từ chối.
-- `reset with live block rejected`: từ chối đổi chế độ khi còn khối đang dùng.
-- `live data and allocation preserved`: các thao tác sai không làm đổi mẫu dữ liệu hoặc số khối còn sống.
-- `valid free accepted`: đúng chủ sở hữu và đúng con trỏ, được giải phóng.
-- `double free rejected`: giải phóng lại trước khi địa chỉ được cấp lại, bị từ chối.
-- `NULL free accepted`: NULL với nhóm hợp lệ là thao tác không làm gì.
-- `all blocks reclaimed`: toàn bộ 32 khối đều trống.
+| Kiểm tra | Điều kiện đạt |
+|---|---|
+| `wrong owner rejected` | Từ chối giải phóng block của nhóm khác |
+| `interior pointer rejected` | Từ chối con trỏ lệch một byte so với đầu block |
+| `outside pointer rejected` | Từ chối con trỏ ngoài arena |
+| `reset with live block rejected` | Từ chối đổi chế độ khi còn block sống |
+| `live data and allocation preserved` | Dữ liệu và trạng thái cấp phát giữ nguyên sau thao tác sai |
+| `valid free accepted` | Giải phóng với đúng chủ sở hữu và con trỏ |
+| `double free rejected` | Từ chối giải phóng lại trước khi địa chỉ được cấp lại |
+| `NULL free accepted` | NULL với nhóm hợp lệ không làm thay đổi trạng thái |
+| `all blocks reclaimed` | Thu hồi đủ 32 block |
 
-Cuối cùng:
+Dòng kết thúc thành công là `DEMO PASS: press RESET/EN to run again`. Việc `app_main()` trả về sau thực nghiệm là hành vi bình thường. Log có FAIL hoặc timeout cần được phân tích theo điều kiện lỗi tương ứng.
 
-```text
-DEMO PASS: press RESET/EN to run again
-```
+## Ý nghĩa và giới hạn
 
-Nếu xuất hiện FAIL hoặc timeout, giữ lại log để phân tích; không ghi kết quả là thành công. Việc `app_main()` kết thúc sau demo là bình thường.
+Phân chia ngân sách duy trì khả năng cấp phát của B trong kịch bản A gây cạn bộ nhớ. Kiểm tra con trỏ và chủ sở hữu giúp từ chối các thao tác giải phóng không hợp lệ được bao phủ bởi bộ thử.
 
-## Trình bày với thầy
+Pool cấp phát block cố định, không có tách/gộp hoặc mượn dung lượng giữa nhóm. Cơ chế dựa trên API ứng dụng, không cung cấp cách ly phần cứng hoặc ngăn task ghi sai RAM. Không kiểm tra tổng quát ghi tràn buffer, không tự sửa metadata và không thu hồi rò rỉ tự động. Phép thử không đo độ trễ, thông lượng, deadline hoặc PSRAM.
 
-Sau khi chạy thành công trên bo, có thể trình bày:
+## Cấu trúc mã nguồn
 
-> Đây là demo ban đầu dùng pool các khối cố định. Ở chế độ dùng chung, A có thể chiếm hết 32 khối nên B không cấp phát được. Khi chia ngân sách, A dùng hết 16 khối dành cho mình nhưng B vẫn lấy được khối từ phần riêng. Hai chế độ giữ cùng tổng dung lượng dữ liệu thô. Chương trình cũng từ chối một số thao tác giải phóng không hợp lệ và kiểm tra thu hồi đầy đủ sau mỗi lượt. Bước tiếp theo là triển khai allocator kích thước biến đổi theo thiết kế báo cáo.
-
-Minh chứng nên lưu: ảnh bo kết nối, log hai vòng SHARED/SPLIT, các kiểm tra, dòng DEMO PASS, cấu hình và phiên bản code. Không lấy đoạn log kỳ vọng trong tài liệu này làm kết quả thực nghiệm.
-
-## Giới hạn
-
-- Pool không có thao tác tách/gộp khối; mọi yêu cầu đều nhận 256 byte.
-- Giới hạn nhóm là quy ước API của ứng dụng. Task có thể truyền mã nhóm khác hoặc ghi RAM sai nếu code cố ý/sai; đây không phải bảo vệ bằng phần cứng.
-- Không có kiểm tra ghi tràn buffer hoặc tự sửa metadata bị hỏng. Các mẫu dữ liệu chỉ giúp phát hiện sai lệch trong bài thử cụ thể.
-- Phát hiện double-free chỉ chắc chắn trong ca thử trước khi địa chỉ được cấp lại; không theo dõi thế hệ cấp phát.
-- Không reset cưỡng bức heap, không sửa rò rỉ bộ nhớ tự động. Chỉ thu hồi bằng các lời gọi giải phóng hợp lệ.
-- Chưa đo độ trễ, thông lượng, deadline, phân mảnh hoặc xác minh PSRAM.
+| Đường dẫn | Vai trò |
+|---|---|
+| `main/main.c` | Chọn chế độ thực nghiệm |
+| `main/legacy_pool_demo.c` | Worker A/B, điều phối lượt thử, kiểm tra và xuất log |
+| `components/demo_pool/include/demo_pool.h` | API và trạng thái lỗi |
+| `components/demo_pool/demo_pool.c` | Arena, metadata chủ sở hữu, phân vùng và mutex |

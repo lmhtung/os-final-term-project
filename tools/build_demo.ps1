@@ -1,4 +1,4 @@
-# Build only. Does not flash, move installations or modify global environment.
+# Build the project using process-local ESP-IDF toolchain configuration.
 $ErrorActionPreference = 'Stop'
 $profilePath = 'C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1'
 $profileText = Get-Content -LiteralPath $profilePath -Raw

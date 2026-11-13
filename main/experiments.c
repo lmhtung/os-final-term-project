@@ -153,7 +153,7 @@ static bool run_case(ah_policy_t selected, const scenario_t *scenario, unsigned 
         ESP_LOGE(TAG, "Timeout: stop without resetting storage in use"); return false;
     }
     bool passed = finish_is_clean(&initial, &final);
-    /* Behavioural assertions are independent of printed PASS labels. */
+    /* Verify allocation counts against region capacity and the injection interval. */
     const unsigned capacity_a = selected == AH_SHARED ? 8192 / (256 + initial.header_bytes) :
         selected == AH_STATIC ? 4096 / (256 + initial.header_bytes) :
         2048 / (256 + initial.header_bytes) + 4096 / (256 + initial.header_bytes);
@@ -205,7 +205,7 @@ void adaptive_experiments_run(void)
     if (!ah_init() || !allocator_tests_run() || !workers_init()) {
         ESP_LOGE(TAG, "SUITE_FAIL,initialization_or_selftest"); return;
     }
-    /* Real SMP access on both cores; no simulation. */
+    /* Concurrent allocation and release on both ESP32-S3 cores. */
     for (int p=AH_SHARED; p<=AH_ADAPTIVE; ++p) {
         ah_stats_t before, after;
         if (ah_reset((ah_policy_t)p) != AH_OK || ah_get_stats(&before) != AH_OK) {

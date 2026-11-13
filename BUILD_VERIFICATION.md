@@ -1,20 +1,33 @@
-# Kiểm tra bản adaptive-v1 — 13/11/2026
+# Hồ sơ xác minh bản dựng — 13/11/2026
 
-## Đã kiểm tra trên máy phát triển
+## Môi trường kiểm tra
 
-- ESP-IDF v6.1, target ESP32-S3, flash cấu hình 16 MB, CPU 160 MHz, tick 100 Hz, PSRAM chưa bật.
-- Build cuối thành công, exit code 0; app vừa partition 1 MiB (còn khoảng 83%).
-- `build/os-btl.bin`: **183104 byte**.
-- SHA256 firmware: `ed3c8103acaaaa75fc72ade282176e6bd90bb82b6c57e16ef91bf0cec921e9c4`.
-- Linker map: arena 8192 byte ở RAM nội, địa chỉ `0x3fc96fb0` trong bản này. Stack hai worker riêng tổng 12288 byte, không nằm trong arena.
-- Sáu test Python của bộ phân tích log đều đạt: log đủ, thiếu kết thúc, nhiều lần khởi động, trùng dòng, self-test FAIL và dữ liệu số sai.
-- `git diff --check` không báo lỗi khoảng trắng ở các thay đổi tracked.
-- Build có cảnh báo từ Kconfig/dependency của SDK; không có lỗi biên dịch ngăn tạo firmware.
+ESP-IDF v6.1, target ESP32-S3, flash cấu hình 16 MB, CPU 160 MHz, tick FreeRTOS 100 Hz, PSRAM tắt. Chế độ thực nghiệm là suite adaptive với ba lần lặp cho mỗi chính sách và kịch bản.
 
-## Chưa xác minh trên phần cứng cho bản mới này
+## Kết quả build và kiểm tra trên máy phát triển
 
-Chưa nạp hoặc chạy firmware adaptive trong phiên triển khai. Kết quả PASS của demo pool cũ không thay thế bằng chứng cho allocator mới.
+| Hạng mục | Kết quả |
+|---|---|
+| Build | Thành công, mã thoát 0 |
+| Kích thước `build/os-btl.bin` | 183104 byte |
+| Phân vùng ứng dụng | 1 MiB; firmware nằm trong dung lượng phân vùng |
+| Arena theo linker map | 8192 byte RAM nội, địa chỉ `0x3fc96fb0` |
+| Stack của hai worker | Tổng 12288 byte, nằm ngoài arena |
+| Kiểm thử Python | Sáu ca kiểm thử bộ phân tích log đạt |
+| Cảnh báo build | Cảnh báo Kconfig/dependency của SDK; không có lỗi ngăn tạo firmware |
 
-Cần nạp, lưu log từ `SUITE_BEGIN` đến `SUITE_PASS,cases=36` và chạy `tools/analyze_results.py`. Có 9 tên kiểm thử bắt buộc và 36 RESULT / 72 TIMING ở cấu hình mặc định. Nếu bất kỳ ca nào FAIL, không coi đó là kết quả đã hoàn thành.
+SHA256 của firmware được kiểm tra:
 
-Hash và kích thước chỉ áp dụng bản firmware tại lần kiểm tra này; build lại với thay đổi code/cấu hình có thể tạo hash khác. ZIP mã nguồn không bao gồm firmware hoặc log giả định.
+```text
+ed3c8103acaaaa75fc72ade282176e6bd90bb82b6c57e16ef91bf0cec921e9c4
+```
+
+Sáu ca Python kiểm tra log đầy đủ, thiếu kết thúc, nhiều phiên khởi động, bản ghi trùng, self-test FAIL và dữ liệu số sai. Các ca này sử dụng fixture để xác minh bộ phân tích.
+
+Kích thước, địa chỉ và hash xác định artifact của lần build được ghi nhận trong hồ sơ này. Mỗi bản dựng cần được đối chiếu với cấu hình và mã nguồn tương ứng.
+
+## Xác minh trên phần cứng
+
+Hồ sơ này chưa có log chạy firmware adaptive trên ESP32-S3. Build thành công xác nhận khả năng biên dịch và liên kết, chưa xác nhận hành vi thực nghiệm trên bo.
+
+Quy trình xác minh gồm nạp firmware, thu log từ `SUITE_BEGIN` đến `SUITE_PASS,cases=36`, sau đó chạy `tools/analyze_results.py`. Ở cấu hình mặc định, log đầy đủ chứa chín tên kiểm thử bắt buộc, 36 dòng RESULT và 72 dòng TIMING. Kết quả FAIL, dữ liệu thiếu hoặc phiên chạy bị ngắt không đáp ứng tiêu chí hoàn tất.

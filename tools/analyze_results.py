@@ -1,4 +1,4 @@
-"""Analyze actual ADAPTIVE firmware logs using only Python's standard library."""
+"""Validate and summarize ADAPTIVE firmware logs using the Python standard library."""
 import argparse
 import csv
 import io
@@ -15,7 +15,7 @@ TESTS |= {f"random_{p}_4000_seed_1234ABCD" for p in POLICIES}
 TESTS |= {f"smp_{p}_2000_allocations" for p in POLICIES}
 
 def parse_log(text):
-    """Use the final boot session only; never mix multiple EN resets."""
+    """Select the final boot session to keep results from separate resets isolated."""
     results, timings, tests, errors = [], [], {}, []
     repeats, finished, started = 0, False, False
     for line in re.sub(r"\x1b\[[0-9;]*m", "", text).splitlines():

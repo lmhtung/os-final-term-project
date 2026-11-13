@@ -1,4 +1,4 @@
-"""Archive source/config/docs without build cache, credentials or fabricated results."""
+"""Package source, configuration and documentation with a SHA256 manifest."""
 from pathlib import Path
 import argparse
 import datetime as dt

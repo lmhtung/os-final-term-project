@@ -80,7 +80,7 @@ bool allocator_tests_run(void)
     REQUIRE(ah_validate() == AH_OK);
     ESP_LOGI(TAG, "TEST,borrow_return_quota_injection,PASS");
 
-    /* Seeded variable-size operations, bounded pointer table, real board only. */
+    /* A fixed seed and bounded pointer table make variable-size workloads repeatable. */
     for (int mode = AH_SHARED; mode <= AH_ADAPTIVE; ++mode) {
         REQUIRE(ah_reset((ah_policy_t)mode) == AH_OK);
         REQUIRE(ah_get_stats(&start) == AH_OK);

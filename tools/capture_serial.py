@@ -1,4 +1,4 @@
-"""Capture real ESP32 UART output; does not flash or intentionally pulse reset."""
+"""Capture ESP32 UART logs until suite completion or timeout."""
 import argparse
 import datetime as dt
 from pathlib import Path
