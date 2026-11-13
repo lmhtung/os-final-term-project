@@ -9,6 +9,7 @@ File này ghi lại **mọi commit Minh thêm vào trên code của Tùng**, đ�
 | Code gốc của Tùng | commit `6ddac91` "Adaptive Multi-Heap + Memory QoS + OOM Fault Injection Instruction" (13/11/2026, 11:12) |
 | Nhánh của Minh | `minh/d1-validate-flag`, tách từ `6ddac91` |
 | Nhánh Đ10 | `minh/d10-region-isolation`, tách từ `minh/d1-validate-flag` (gồm luôn commit 1–3). Xem riêng phần Đ10: `git diff minh/d1-validate-flag..minh/d10-region-isolation` |
+| Nhánh Đ8 + Đ9 | `minh/d8-d9-scenarios`, tách từ `minh/d10-region-isolation` (gồm luôn commit 1–5). Xem riêng phần này: `git diff minh/d10-region-isolation..minh/d8-d9-scenarios` |
 | Cách xem toàn bộ thay đổi | `git diff 6ddac91..minh/d1-validate-flag` |
 | Nhánh `main` của Tùng | **Chưa bị đụng tới.** Mọi thay đổi chỉ nằm trên nhánh của Minh |
 
@@ -20,7 +21,9 @@ File này ghi lại **mọi commit Minh thêm vào trên code của Tùng**, đ�
 | 2 | `8b97de8` | 13/11/2026 | Thêm mục "Đề xuất cải tiến" vào cuối `DESIGN_ADAPTIVE.md` | Không, chỉ là tài liệu |
 | 3 | `d360552` | 13/11/2026 | Thêm `CHANGES_MINH.md` | Không, chỉ là tài liệu |
 | 4 | `ecace7a` | 13/11/2026 | Cô lập lỗi theo vùng: guard, cách ly vùng hỏng, `ah_reset_group` (Đ10). Nhánh `minh/d10-region-isolation` | **Có**, xem mục commit 4 |
-| 5 | (commit ghi mục này) | 13/11/2026 | Ghi commit 4 vào file này và vào `DESIGN_ADAPTIVE.md` | Không, chỉ là tài liệu |
+| 5 | `25a1aac` | 13/11/2026 | Ghi commit 4 vào file này và vào `DESIGN_ADAPTIVE.md` | Không, chỉ là tài liệu |
+| 6 | `190376e` | 13/11/2026 | Thêm cấu hình SHARED_QUOTA và kịch bản B_OVER_RESERVE (Đ8, Đ9). Nhánh `minh/d8-d9-scenarios` | **Có**: suite thành 60 case, log đổi thành `adaptive-v2`. Xem mục commit 6 |
+| 7 | (commit ghi mục này) | 13/11/2026 | Ghi commit 6 vào file này | Không, chỉ là tài liệu |
 
 ---
 
@@ -121,6 +124,52 @@ Nhánh `minh/d10-region-isolation`, tách từ `minh/d1-validate-flag`.
 
 - [ ] `idf.py build` (máy Minh chưa có ESP-IDF).
 - [ ] Chạy suite trên bo: self-test `region_isolation_and_group_reset` phải PASS, 36 case phải PASS như cũ.
+
+---
+
+## Commit 6 — `190376e`: cấu hình SHARED_QUOTA và kịch bản B_OVER_RESERVE (Đ8, Đ9)
+
+Nhánh `minh/d8-d9-scenarios`, tách từ `minh/d10-region-isolation`.
+
+**Vấn đề ở `6ddac91`.**
+
+- Ở mọi kịch bản, B chỉ xin 4 × 256 byte, nằm gọn trong phần dự trữ của cả STATIC lẫn ADAPTIVE. Vì vậy thí nghiệm chưa bao giờ chạm tới điểm đánh đổi của ADAPTIVE: B chỉ được bảo đảm 2048 byte thay vì 4096.
+- Phép so sánh không có "heap chung + quota", dù `ah_set_limit` trên SHARED đã làm được. Đây đúng là câu phản biện dễ bị hỏi nhất: "ADAPTIVE khác gì một heap chung cộng quota cho từng task?".
+
+**Đã sửa:**
+
+| File | Thay đổi |
+|---|---|
+| `main/experiments.c` | Bảng `configs[]` gồm policy + hạn mức, thay cho vòng lặp qua enum. Cấu hình thứ tư **SHARED_QUOTA**: `AH_SHARED` + `ah_set_limit(6144)` cho mỗi nhóm, cùng trần với ADAPTIVE, nên mỗi nhóm vẫn còn ít nhất 8192 − 6144 byte. Kịch bản thứ năm **B_OVER_RESERVE**: A xin 40, B xin 12 × 256 byte |
+| `main/experiments.c` (`run_case`) | Khi B cần vượt phần được bảo đảm, số buffer B nhận được là **số đo**, nên chỉ kiểm tra B nhận đủ phần bảo đảm. Các kịch bản cũ vẫn kiểm tra đúng như trước. Thêm kiểm tra B không bị `QUOTA` và mọi yêu cầu của B đều được tính |
+| `main/experiments.c` | `SUITE_BEGIN` đổi thành `adaptive-v2` vì tập dòng RESULT đã đổi |
+| `tools/analyze_results.py` | Nhận phiên bản suite: v2 cần 4 cấu hình × 5 kịch bản và 10 self-test; log v1 cũ vẫn phân tích theo tiêu chí cũ. Bảng tổng hợp thêm cột "B yêu cầu". Self-test nào báo FAIL, kể cả không có tên trong danh sách, cũng tính là lỗi |
+| `tools/test_analyze_results.py` | 10 test (thêm: log v1, phiên bản lạ, self-test lạ báo FAIL) |
+| `README.md`, `BUILD_VERIFICATION.md` | Thêm ghi chú về 60 case và `adaptive-v2`, **không xoá chữ cũ** |
+
+**Kết quả dự kiến trên bo** (header 16 byte), kịch bản B_OVER_RESERVE:
+
+| Cấu hình | A nhận | B nhận / 12 | B được bảo đảm |
+|---|---:|---:|---:|
+| SHARED | 30 | 0 | 0 |
+| STATIC | 15 | 12 | 15 |
+| ADAPTIVE | 22 | 7 | 7 |
+| SHARED_QUOTA | 22 | **8** | 7 |
+
+Số này tính bằng một mô hình tính tay (`native/model_scenarios.py`, ngoài repo). Ở header 32 byte, mô hình khớp 16/16 dòng với số native, nên đáng tin; nhưng vẫn phải chờ log trên bo.
+
+**Kết luận trung thực:** xét riêng về dung lượng, heap chung + quota **không thua** ADAPTIVE. Nó còn cho B thêm 1 buffer, vì heap chung không lãng phí phần lẻ ở đuôi mỗi vùng. Lợi thế của ADAPTIVE phải đến từ **cô lập lỗi** (commit 4). Hiện chưa có kịch bản nào đo lợi thế đó; đây là việc tiếp theo nên làm.
+
+**Đã kiểm chứng (trên PC, không phải bo):**
+
+- Chạy **nguyên** `main/experiments.c` trên PC bằng shim FreeRTOS đa luồng (task là pthread thật; harness ở `native/`, ngoài repo): **60/60 case PASS** ở cả hai chế độ validate, kể cả stress 2 luồng. `analyze_results.py` đọc log và trả mã 0.
+- Mutation bỏ `ah_set_limit` thì suite FAIL ở case 12 (SHARED_QUOTA, PRESSURE). Vậy assert mới thật sự có tác dụng.
+- Bản gốc `6ddac91` chạy qua cùng shim: 36/36 PASS. Vậy shim không làm sai kết quả.
+
+**Chưa kiểm chứng, nhờ Tùng:**
+
+- [ ] `idf.py build`.
+- [ ] Chạy suite trên bo; kỳ vọng `SUITE_PASS,cases=60`, B_OVER_RESERVE ra đúng bảng trên.
 
 ---
 
