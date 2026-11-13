@@ -6,4 +6,12 @@ menu "OS project demonstrations"
         int "Repetitions per policy and scenario"
         range 1 20
         default 3
+    config AH_SKIP_PER_CALL_VALIDATION
+        bool "Skip invariant validation inside each ah_alloc/ah_free (latency measurement)"
+        default n
+        help
+            Off (default): every ah_alloc/ah_free walks the whole arena to check
+            invariants, as in the original design. TIMING rows then include that walk.
+            On: the walk is skipped inside ah_alloc/ah_free; experiments still call
+            ah_validate() at round boundaries. Use only for latency measurement runs.
 endmenu

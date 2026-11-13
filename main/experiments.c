@@ -199,9 +199,13 @@ void adaptive_experiments_run(void)
     ESP_LOGE(TAG, "SUITE_FAIL,this experiment requires dual-core FreeRTOS");
     return;
 #endif
-    ESP_LOGI(TAG, "SUITE_BEGIN,adaptive-v1,IDF=%s,arena=%u,repeats=%d", esp_get_idf_version(), AH_ARENA_BYTES, CONFIG_APP_EXPERIMENT_REPEATS);
+    const char *validate_mode = ah_validate_each_call() ? "each_call" : "boundary";
+    ESP_LOGI(TAG, "SUITE_BEGIN,adaptive-v1,IDF=%s,arena=%u,repeats=%d,validate=%s", esp_get_idf_version(), AH_ARENA_BYTES, CONFIG_APP_EXPERIMENT_REPEATS, validate_mode);
     ESP_LOGI(TAG, "Reservations ADAPTIVE: A=2048 B=2048 common=4096; all limits include headers/alignment");
-    ESP_LOGI(TAG, "Invariant checks are enabled inside allocator operations; timings include these checks and lock wait");
+    if (ah_validate_each_call())
+        ESP_LOGI(TAG, "Invariant checks are enabled inside allocator operations; timings include these checks and lock wait");
+    else
+        ESP_LOGI(TAG, "Invariant checks run at round boundaries only; timings include lock wait but not the invariant walk");
     if (!ah_init() || !allocator_tests_run() || !workers_init()) {
         ESP_LOGE(TAG, "SUITE_FAIL,initialization_or_selftest"); return;
     }

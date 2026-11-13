@@ -33,6 +33,9 @@ ah_result_t ah_alloc(ah_group_t group, size_t bytes, void **out);
 ah_result_t ah_free(ah_group_t group, void *ptr);
 ah_result_t ah_get_stats(ah_stats_t *out);
 ah_result_t ah_validate(void);
+/* True when ah_alloc/ah_free validate invariants on every call (default).
+ * False in latency-measurement builds (CONFIG_AH_SKIP_PER_CALL_VALIDATION). */
+bool ah_validate_each_call(void);
 /* Limit counts allocator overhead too. Cannot reduce below current usage/reserve. */
 ah_result_t ah_set_limit(ah_group_t group, size_t charged_bytes);
 /* Every Nth valid request of selected groups fails before mutation. 0 disables. */

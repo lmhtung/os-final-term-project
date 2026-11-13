@@ -67,6 +67,21 @@ def parse_log(text):
         errors.append("Required on-board self-tests are missing or failed.")
     return results, timings, tests, errors
 
+VALIDATE_MODES = ("each_call", "boundary")
+
+def validate_mode(text):
+    """Return the validate= mode of the final boot session.
+
+    Logs written before the option existed carry no field; that firmware always
+    validated inside every call, so they map to each_call. None means no session.
+    """
+    mode = None
+    for line in re.sub(r"\x1b\[[0-9;]*m", "", text).splitlines():
+        if "SUITE_BEGIN," in line:
+            match = re.search(r"validate=([A-Za-z_]+)", line)
+            mode = match.group(1) if match else "each_call"
+    return mode
+
 def write_csv(path, fields, rows):
     with path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
@@ -78,13 +93,18 @@ def main():
     parser.add_argument("log", type=Path)
     parser.add_argument("--out", type=Path, default=Path("results/analysis"))
     args = parser.parse_args()
-    results, timings, tests, errors = parse_log(args.log.read_text(encoding="utf-8", errors="replace"))
+    text = args.log.read_text(encoding="utf-8", errors="replace")
+    results, timings, tests, errors = parse_log(text)
+    mode = validate_mode(text)
+    if mode is not None and mode not in VALIDATE_MODES:
+        errors.append(f"Unknown validate mode: {mode}")
     args.out.mkdir(parents=True, exist_ok=True)
     write_csv(args.out / "results.csv", RESULT_FIELDS, results)
     write_csv(args.out / "timings.csv", TIMING_FIELDS, timings)
     lines = ["# Báo cáo kết quả từ log phần cứng", "", f"Nguồn: `{args.log.resolve()}`", "",
              "Trạng thái: **" + ("KHÔNG ĐỦ / CÓ LỖI" if errors else "ĐẦY ĐỦ, CÁC CA ĐỀU PASS") + "**", "",
-             "Chỉ dùng phiên khởi động cuối cùng trong log. Không tự điền số liệu thiếu.", ""]
+             "Chỉ dùng phiên khởi động cuối cùng trong log. Không tự điền số liệu thiếu.", "",
+             f"Chế độ kiểm tra bất biến: `{mode}`" + (" (kiểm tra trong mọi lời gọi ah_alloc/ah_free)" if mode == "each_call" else " (chỉ kiểm tra ở ranh giới lượt)" if mode == "boundary" else ""), ""]
     if errors:
         lines += ["Các vấn đề:", ""] + [f"- {e}" for e in errors] + [""]
     lines += ["## Cấp phát theo kịch bản", "", "| Chế độ | Kịch bản | Lượt | A thành công TB | B thành công TB | B OOM/Quota tổng | B lỗi chèn tổng | Mượn A cao nhất (byte tính cả header) |",
@@ -94,7 +114,9 @@ def main():
             rows = [r for r in results if r["policy"] == policy and r["scenario"] == scenario]
             if rows:
                 lines.append(f"| {policy} | {scenario} | {len(rows)} | {statistics.mean(r['a_ok'] for r in rows):.2f} | {statistics.mean(r['b_ok'] for r in rows):.2f} | {sum(r['b_no_memory']+r['b_quota'] for r in rows)} | {sum(r['b_injected'] for r in rows)} | {max(r['a_peak_borrowed'] for r in rows)} |")
-    lines += ["", "## Thời gian lời gọi quan sát được", "", "Các phép đo bao gồm kiểm tra bất biến, chờ mutex và ảnh hưởng lập lịch; không phải WCET hoặc bảo đảm deadline. Trung bình cấp phát gồm cả lời gọi thất bại. Không lấy timestamp dòng log làm thời gian cấp phát.", "",
+    timing_note = ("Các phép đo bao gồm chờ mutex và ảnh hưởng lập lịch, không gồm lượt kiểm tra bất biến (chỉ chạy ở ranh giới lượt)"
+                   if mode == "boundary" else "Các phép đo bao gồm kiểm tra bất biến, chờ mutex và ảnh hưởng lập lịch")
+    lines += ["", "## Thời gian lời gọi quan sát được", "", timing_note + "; không phải WCET hoặc bảo đảm deadline. Trung bình cấp phát gồm cả lời gọi thất bại. Không lấy timestamp dòng log làm thời gian cấp phát. Không trộn số đo của hai chế độ kiểm tra bất biến trong cùng một bảng.", "",
               "| Chế độ | Nhóm | Cấp phát TB (us) | Cấp phát max quan sát (us) | Giải phóng TB (us) |", "|---|---|---:|---:|---:|"]
     for policy in POLICIES:
         for group in ("A", "B"):

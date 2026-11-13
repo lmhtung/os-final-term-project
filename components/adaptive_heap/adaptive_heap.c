@@ -3,6 +3,27 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+/* AH_VALIDATE_EACH_CALL
+ *   1 (default): ah_alloc/ah_free run the full invariant walk on every call.
+ *   0: skip that walk inside ah_alloc/ah_free so call latency measures the
+ *      allocator itself. ah_validate, ah_get_stats and ah_reset still validate,
+ *      so callers must call ah_validate() at round boundaries.
+ * The Kconfig option is phrased as "skip" so a missing option keeps the safe
+ * original behaviour. Native builds may pass -DAH_VALIDATE_EACH_CALL=0/1. */
+#ifndef AH_VALIDATE_EACH_CALL
+#  ifdef ESP_PLATFORM
+#    include "sdkconfig.h"
+#  endif
+#  ifdef CONFIG_AH_SKIP_PER_CALL_VALIDATION
+#    define AH_VALIDATE_EACH_CALL 0
+#  else
+#    define AH_VALIDATE_EACH_CALL 1
+#  endif
+#endif
+#if AH_VALIDATE_EACH_CALL != 0 && AH_VALIDATE_EACH_CALL != 1
+#  error "AH_VALIDATE_EACH_CALL must be 0 or 1"
+#endif
+
 typedef struct block {
     size_t span, requested;
     struct block *next;
@@ -154,7 +175,7 @@ ah_result_t ah_alloc(ah_group_t group, size_t bytes, void **out)
     xSemaphoreTake(lock, portMAX_DELAY);
     ah_result_t result = AH_OK;
     if (!ready) { result = AH_INVALID; goto done; }
-    if (!validate_locked()) { result = AH_CORRUPT; goto done; }
+    if (AH_VALIDATE_EACH_CALL && !validate_locked()) { result = AH_CORRUPT; goto done; }
     ah_group_stats_t *g = &gs[group];
     ++g->attempts;
     if (inject_n && (inject_mask & (1u << group)) && ++inject_count[group] % inject_n == 0) {
@@ -187,7 +208,7 @@ ah_result_t ah_free(ah_group_t group, void *ptr)
     xSemaphoreTake(lock, portMAX_DELAY);
     ah_result_t result = AH_BAD_POINTER;
     if (!ready) { result = AH_INVALID; goto done; }
-    if (!validate_locked()) { result = AH_CORRUPT; goto done; }
+    if (AH_VALIDATE_EACH_CALL && !validate_locked()) { result = AH_CORRUPT; goto done; }
     if (!ptr) { result = AH_OK; goto done; }
     for (size_t i = 0; i < heap_count; ++i) {
         heap_t *h = &heaps[i];
@@ -265,6 +286,8 @@ void ah_inject_every(uint32_t n, uint32_t mask)
     inject_n = n; inject_mask = mask; memset(inject_count, 0, sizeof(inject_count));
     xSemaphoreGive(lock);
 }
+
+bool ah_validate_each_call(void) { return AH_VALIDATE_EACH_CALL != 0; }
 
 const char *ah_policy_name(ah_policy_t p)
 { return p == AH_SHARED ? "SHARED" : p == AH_STATIC ? "STATIC" : p == AH_ADAPTIVE ? "ADAPTIVE" : "INVALID"; }

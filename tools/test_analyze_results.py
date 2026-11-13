@@ -1,6 +1,6 @@
 """Validate log parsing with in-memory fixtures independent of board measurements."""
 import unittest
-from analyze_results import parse_log, POLICIES, SCENARIOS, TESTS
+from analyze_results import parse_log, validate_mode, POLICIES, SCENARIOS, TESTS
 
 def fixture():
     lines = ["SUITE_BEGIN,adaptive-v1,repeats=1"]
@@ -37,6 +37,14 @@ class LogParserTests(unittest.TestCase):
     def test_malformed_numbers(self):
         broken = fixture().replace("NORMAL,1,0", "NORMAL,not-an-integer,0", 1)
         self.assertTrue(parse_log(broken)[3])
+
+    def test_validate_mode(self):
+        self.assertEqual(validate_mode(fixture()), "each_call")  # log cu khong co truong
+        boundary = fixture().replace("repeats=1", "repeats=1,validate=boundary")
+        self.assertEqual(validate_mode(boundary), "boundary")
+        self.assertEqual(parse_log(boundary)[3], [])  # parse_log khong bi anh huong
+        self.assertEqual(validate_mode(boundary + "\n" + fixture()), "each_call")  # phien cuoi
+        self.assertIsNone(validate_mode("no session here"))
 
 if __name__ == "__main__":
     unittest.main()
