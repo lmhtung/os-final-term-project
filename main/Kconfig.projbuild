@@ -1,0 +1,9 @@
+menu "OS project demonstrations"
+    config APP_LEGACY_POOL_DEMO
+        bool "Run the original fixed-block pool demo"
+        default n
+    config APP_EXPERIMENT_REPEATS
+        int "Repetitions per policy and scenario"
+        range 1 20
+        default 3
+endmenu

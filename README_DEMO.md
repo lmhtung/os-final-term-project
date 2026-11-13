@@ -1,5 +1,7 @@
 # Demo cô lập cạn bộ nhớ trên ESP32-S3
 
+> Tài liệu này dành cho **demo cũ khối cố định**. Firmware mặc định hiện chạy bộ thử adaptive kích thước biến đổi; xem `README.md`. Muốn chạy lại demo cũ, bật `APP_LEGACY_POOL_DEMO` trong SDK Configuration Editor rồi build và nạp lại.
+
 ## Mục đích và trạng thái
 
 Demo minh họa ảnh hưởng của việc phân chia ngân sách bộ nhớ giữa hai nhóm task. Chương trình chạy trực tiếp trên ESP32-S3, in kết quả qua UART. Không sử dụng mô phỏng.
