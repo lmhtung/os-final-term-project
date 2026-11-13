@@ -31,3 +31,5 @@ Kích thước, địa chỉ và hash xác định artifact của lần build đ
 Hồ sơ này chưa có log chạy firmware adaptive trên ESP32-S3. Build thành công xác nhận khả năng biên dịch và liên kết, chưa xác nhận hành vi thực nghiệm trên bo.
 
 Quy trình xác minh gồm nạp firmware, thu log từ `SUITE_BEGIN` đến `SUITE_PASS,cases=36`, sau đó chạy `tools/analyze_results.py`. Ở cấu hình mặc định, log đầy đủ chứa chín tên kiểm thử bắt buộc, 36 dòng RESULT và 72 dòng TIMING. Kết quả FAIL, dữ liệu thiếu hoặc phiên chạy bị ngắt không đáp ứng tiêu chí hoàn tất.
+
+*Bổ sung (Minh, nhánh `minh/d8-d9-scenarios`):* firmware từ nhánh này ghi `adaptive-v2` ở dòng `SUITE_BEGIN`. Log đầy đủ chứa mười tên kiểm thử bắt buộc (thêm `region_isolation_and_group_reset`), 60 dòng RESULT, 120 dòng TIMING và kết thúc ở `SUITE_PASS,cases=60`. `tools/analyze_results.py` nhận ra phiên bản và vẫn phân tích log `adaptive-v1` theo tiêu chí cũ.

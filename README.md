@@ -39,6 +39,7 @@ Chi tiết thuật toán, bất biến và giới hạn nằm trong [DESIGN_ADAP
 4. Đóng ứng dụng đang giữ cổng COM, sau đó chọn **Build → Flash → Monitor**.
 5. Nếu bỏ lỡ log khởi động, nhấn EN một lần khi monitor đã mở.
 6. Theo dõi đến `SUITE_PASS,cases=36` ở cấu hình mặc định. Lưu toàn bộ log nếu xuất hiện `SUITE_FAIL` hoặc lỗi kiểm thử.
+   *Bổ sung (Minh, nhánh `minh/d8-d9-scenarios`): firmware từ nhánh này in `SUITE_BEGIN,adaptive-v2,...` và kết thúc ở `SUITE_PASS,cases=60` (4 cấu hình × 5 kịch bản × 3 lần).*
 
 ### Terminal ESP-IDF
 
@@ -73,8 +74,9 @@ Mỗi yêu cầu trong bảng có payload **256 byte**. B giữ các buffer đ�
 | BURST | 20 | 4 | Không | Đánh giá lợi ích mượn vùng chung khi A tăng nhu cầu |
 | PRESSURE | 40 | 4 | Không | Đánh giá khả năng cấp phát của B khi A gây cạn bộ nhớ |
 | INJECTED | 20 | 4 | Mỗi yêu cầu thứ 3 của từng nhóm | Kiểm tra xử lý thất bại và bảo toàn trạng thái |
+| B_OVER_RESERVE *(bổ sung)* | 40 | 12 | Không | B cần nhiều hơn phần dự trữ 2048 byte của ADAPTIVE trong lúc A giữ tối đa |
 
-Ba chính sách × bốn kịch bản × ba lần lặp tạo **36 lượt so sánh**. Bộ kiểm thử bổ sung gồm kiểm tra API/con trỏ, phân mảnh và gộp khối, mượn trả, hạn mức, injection, 4000 thao tác ngẫu nhiên cho mỗi chính sách và kiểm thử SMP với 1000 lần cấp phát/giải phóng mỗi task cho mỗi chính sách.
+Ba chính sách × bốn kịch bản × ba lần lặp tạo **36 lượt so sánh**. *Bổ sung (nhánh `minh/d8-d9-scenarios`): thêm cấu hình thứ tư SHARED_QUOTA (heap chung 8 KiB, mỗi nhóm giữ tối đa 6144 byte, cùng trần với ADAPTIVE) và kịch bản B_OVER_RESERVE, thành 4 × 5 × 3 = **60 lượt**. Với B_OVER_RESERVE, số buffer B nhận được khi vượt phần bảo đảm là số đo, firmware chỉ kiểm tra B nhận đủ phần bảo đảm.* Bộ kiểm thử bổ sung gồm kiểm tra API/con trỏ, phân mảnh và gộp khối, mượn trả, hạn mức, injection, 4000 thao tác ngẫu nhiên cho mỗi chính sách và kiểm thử SMP với 1000 lần cấp phát/giải phóng mỗi task cho mỗi chính sách.
 
 STATIC dành 4 KiB riêng cho B, ADAPTIVE dành 2 KiB. Hai phương án có cùng tổng arena, nhưng khác dung lượng dự trữ. Nhu cầu bốn buffer của B nằm trong mức dự trữ của cả hai. Trong INJECTED, yêu cầu thứ ba của B bị từ chối có chủ đích và được thống kê tách khỏi lỗi thiếu dung lượng.
 

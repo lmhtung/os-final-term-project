@@ -15,9 +15,21 @@
 static const char *TAG = "ADAPTIVE";
 enum { STACK_BYTES = 6144, MAX_REQUESTS = 40, STRESS_STEPS = 1000 };
 typedef struct { const char *name; unsigned a_requests, b_requests, inject_every; } scenario_t;
+/* B_OVER_RESERVE: while A holds as much as it may, B needs 12 x 256 bytes, more than the
+ * 2048-byte ADAPTIVE reserve, so the reserve/borrow trade-off becomes visible. */
 static const scenario_t scenarios[] = {
     {"NORMAL", 4, 4, 0}, {"BURST", 20, 4, 0},
-    {"PRESSURE", 40, 4, 0}, {"INJECTED", 20, 4, 3}
+    {"PRESSURE", 40, 4, 0}, {"INJECTED", 20, 4, 3},
+    {"B_OVER_RESERVE", 40, 12, 0}
+};
+/* A configuration is an allocator policy plus optional per-group limits. SHARED_QUOTA is
+ * one shared 8 KiB region where each group may hold at most 6144 bytes, the same ceiling
+ * as ADAPTIVE, so each group is still left 8192 - 6144 bytes. It answers "how is ADAPTIVE
+ * different from a shared heap with per-task quotas?". limit 0 keeps the policy default. */
+typedef struct { const char *name; ah_policy_t policy; size_t limit; } config_t;
+static const config_t configs[] = {
+    {"SHARED", AH_SHARED, 0}, {"STATIC", AH_STATIC, 0}, {"ADAPTIVE", AH_ADAPTIVE, 0},
+    {"SHARED_QUOTA", AH_SHARED, 6144}
 };
 typedef struct {
     unsigned ok, no_memory, quota, injected, unexpected;
@@ -141,10 +153,14 @@ static bool finish_is_clean(const ah_stats_t *initial, ah_stats_t *final)
         !measured[0].unexpected && !measured[1].unexpected;
 }
 
-static bool run_case(ah_policy_t selected, const scenario_t *scenario, unsigned run)
+static bool run_case(const config_t *config, const scenario_t *scenario, unsigned run)
 {
     ah_stats_t initial, final;
-    if (ah_reset(selected) != AH_OK || ah_get_stats(&initial) != AH_OK) return false;
+    const ah_policy_t selected = config->policy;
+    if (ah_reset(selected) != AH_OK) return false;
+    if (config->limit && (ah_set_limit(AH_A, config->limit) != AH_OK ||
+                          ah_set_limit(AH_B, config->limit) != AH_OK)) return false;
+    if (ah_get_stats(&initial) != AH_OK) return false;
     memset(measured, 0, sizeof(measured)); measured[0].data_ok = measured[1].data_ok = true;
     current = scenario; stress_mode = false;
     ah_inject_every(scenario->inject_every, 3);
@@ -156,14 +172,23 @@ static bool run_case(ah_policy_t selected, const scenario_t *scenario, unsigned 
     /* Verify allocation counts against region capacity and the injection interval.
      * Each region ends with guard_bytes that cannot be allocated. */
     const unsigned unit = 256 + (unsigned)initial.header_bytes, guard = (unsigned)initial.guard_bytes;
-    const unsigned capacity_a = selected == AH_SHARED ? (8192 - guard) / unit :
+    unsigned capacity_a = selected == AH_SHARED ? (8192 - guard) / unit :
         selected == AH_STATIC ? (4096 - guard) / unit :
         (2048 - guard) / unit + (4096 - guard) / unit;
+    if (config->limit && config->limit / unit < capacity_a) capacity_a = (unsigned)(config->limit / unit);
     unsigned valid_a = scenario->a_requests - (scenario->inject_every ? scenario->a_requests / scenario->inject_every : 0);
     passed &= measured[AH_A].ok == (valid_a < capacity_a ? valid_a : capacity_a);
     if (!scenario->inject_every) {
-        unsigned expected_b = selected == AH_SHARED && scenario->a_requests == 40 ? 0 : scenario->b_requests;
-        passed &= measured[AH_B].ok == expected_b;
+        /* Buffers B is guaranteed even when A holds all it may. A allocates first and keeps
+         * everything, so what A leaves in a shared region is one contiguous tail. */
+        const bool plain_shared = selected == AH_SHARED && !config->limit;
+        const unsigned guaranteed_b = config->limit ? (config->limit < 8192 - guard ? (unsigned)(8192 - guard - config->limit) / unit : 0) :
+            selected == AH_STATIC ? (4096 - guard) / unit : selected == AH_ADAPTIVE ? (2048 - guard) / unit : 0;
+        unsigned expected_b = plain_shared && scenario->a_requests == 40 ? 0 : scenario->b_requests;
+        /* Beyond its guarantee B's count is the measurement, so only the guarantee is checked. */
+        if (plain_shared || scenario->b_requests <= guaranteed_b) passed &= measured[AH_B].ok == expected_b;
+        else passed &= measured[AH_B].ok >= guaranteed_b && measured[AH_B].ok <= scenario->b_requests;
+        passed &= measured[AH_B].ok + measured[AH_B].no_memory == scenario->b_requests && !measured[AH_B].quota;
         if (scenario->a_requests == 4) passed &= measured[AH_A].ok == 4;
         if (scenario->a_requests == 20) passed &= selected == AH_STATIC ? measured[AH_A].ok < 20 : measured[AH_A].ok == 20;
     } else {
@@ -179,7 +204,7 @@ static bool run_case(ah_policy_t selected, const scenario_t *scenario, unsigned 
             s->no_memory == m->no_memory && s->quota_failures == m->quota;
     }
     printf("RESULT,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s\n",
-        ah_policy_name(selected), scenario->name, run,
+        config->name, scenario->name, run,
         measured[0].ok, measured[1].ok, measured[0].no_memory, measured[1].no_memory,
         measured[0].quota, measured[1].quota, measured[0].injected, measured[1].injected,
         (unsigned)final.group[0].peak_bytes, (unsigned)final.group[1].peak_bytes,
@@ -189,7 +214,7 @@ static bool run_case(ah_policy_t selected, const scenario_t *scenario, unsigned 
         measurements_t *m = &measured[g];
         unsigned calls = m->ok + m->no_memory + m->quota + m->injected + m->unexpected;
         printf("TIMING,%s,%s,%u,%c,%u,%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%" PRIu64 "\n",
-            ah_policy_name(selected), scenario->name, run, g == 0 ? 'A' : 'B', calls,
+            config->name, scenario->name, run, g == 0 ? 'A' : 'B', calls,
             m->alloc_us_sum, m->alloc_us_max, m->ok, m->free_us_sum, m->free_us_max);
     }
     return passed;
@@ -202,8 +227,9 @@ void adaptive_experiments_run(void)
     return;
 #endif
     const char *validate_mode = ah_validate_each_call() ? "each_call" : "boundary";
-    ESP_LOGI(TAG, "SUITE_BEGIN,adaptive-v1,IDF=%s,arena=%u,repeats=%d,validate=%s", esp_get_idf_version(), AH_ARENA_BYTES, CONFIG_APP_EXPERIMENT_REPEATS, validate_mode);
+    ESP_LOGI(TAG, "SUITE_BEGIN,adaptive-v2,IDF=%s,arena=%u,repeats=%d,validate=%s", esp_get_idf_version(), AH_ARENA_BYTES, CONFIG_APP_EXPERIMENT_REPEATS, validate_mode);
     ESP_LOGI(TAG, "Reservations ADAPTIVE: A=2048 B=2048 common=4096; all limits include headers/alignment");
+    ESP_LOGI(TAG, "SHARED_QUOTA: one shared 8192 region, limit 6144 per group (same ceiling as ADAPTIVE)");
     if (ah_validate_each_call())
         ESP_LOGI(TAG, "Invariant checks are enabled inside allocator operations; timings include these checks and lock wait");
     else
@@ -232,8 +258,8 @@ void adaptive_experiments_run(void)
     unsigned cases = 0;
     for (unsigned run=1; run<=CONFIG_APP_EXPERIMENT_REPEATS; ++run) {
         for (unsigned s=0; s<sizeof(scenarios)/sizeof(scenarios[0]); ++s) {
-            for (int p=AH_SHARED; p<=AH_ADAPTIVE; ++p) {
-                if (!run_case((ah_policy_t)p, &scenarios[s], run)) {
+            for (unsigned c=0; c<sizeof(configs)/sizeof(configs[0]); ++c) {
+                if (!run_case(&configs[c], &scenarios[s], run)) {
                     ESP_LOGE(TAG, "SUITE_FAIL,case=%u", cases + 1); return;
                 }
                 ++cases;
