@@ -1,5 +1,7 @@
 # Quản lý bộ nhớ đa heap thích nghi trên ESP32-S3 FreeRTOS
 
+> *Bổ sung (Minh, 14/11/2026): các thay đổi của Minh trên nền `6ddac91` được ghi trong [`CHANGES_MINH.md`](CHANGES_MINH.md); đọc mục "Đọc trước" ở đầu file đó trước khi gộp nhánh `minh/integration`.*
+
 ## Bài toán và mục tiêu
 
 Khi nhiều tác vụ dùng chung một heap, một tác vụ có nhu cầu bộ nhớ lớn có thể chiếm hết các khối còn trống, khiến tác vụ quan trọng không cấp phát được. Chia bộ nhớ thành các vùng riêng giúp cô lập tình huống cạn bộ nhớ, nhưng dung lượng dành cho một nhóm có thể bị bỏ trống trong khi nhóm khác cần thêm.
