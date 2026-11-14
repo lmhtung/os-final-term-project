@@ -1,6 +1,6 @@
 # Quản lý bộ nhớ đa heap thích nghi trên ESP32-S3 FreeRTOS
 
-> *Bổ sung (Minh, 14/11/2026): các thay đổi của Minh trên nền `6ddac91` được ghi trong [`CHANGES_MINH.md`](CHANGES_MINH.md); đọc mục "Đọc trước" ở đầu file đó trước khi gộp nhánh `minh/integration`.*
+> *Bổ sung (Minh, 14/11/2026): các thay đổi của Minh trên nền `6ddac91` được ghi trong [`CHANGES_MINH.md`](CHANGES_MINH.md); đọc mục "Đọc trước" ở đầu file đó. Các thay đổi đã có trên `main` từ 14/11/2026; bản gốc của Tùng là commit `6ddac91`.*
 
 ## Bài toán và mục tiêu
 

@@ -4,6 +4,8 @@ File này ghi lại **mọi commit Minh thêm vào trên code của Tùng**, đ�
 
 ## Đọc trước: tóm tắt cho Tùng (cập nhật 14/11/2026)
 
+> **Cập nhật 14/11/2026: các thay đổi này đã được đưa thẳng lên `main`** (fast-forward từ `6ddac91`, không force push), để ai mở link repo cũng thấy code mới. Lịch sử của Tùng còn nguyên: commit gốc vẫn là `6ddac91`. Muốn xem lại bản gốc thì chạy `git checkout 6ddac91`. Muốn bỏ thay đổi của Minh thì chạy `git revert 6ddac91..main`, đừng force push. Phần "Gộp nhánh nào?" bên dưới giữ lại để tham khảo; Tùng không cần gộp nữa, chỉ cần `git pull`. Các việc nhờ Tùng (build và chạy trên bo) **vẫn còn nguyên**.
+
 ### Gộp nhánh nào?
 
 **Chỉ cần nhánh `minh/integration`.** Nhánh này chứa mọi thay đổi của Minh (commit 1–8 trong bảng bên dưới). Ba nhánh `minh/d1-validate-flag`, `minh/d10-region-isolation`, `minh/d8-d9-scenarios` là các bước trung gian nối tiếp nhau, giữ lại để xem từng phần riêng; không cần gộp chúng.
@@ -96,7 +98,8 @@ Harness nằm ngoài repo, trên máy Minh. Số đo trên PC chỉ dùng để 
 | 5 | `25a1aac` | 13/11/2026 | Ghi commit 4 vào file này và vào `DESIGN_ADAPTIVE.md` | Không, chỉ là tài liệu |
 | 6 | `190376e` | 13/11/2026 | Thêm cấu hình SHARED_QUOTA và kịch bản B_OVER_RESERVE (Đ8, Đ9). Nhánh `minh/d8-d9-scenarios` | **Có**: suite thành 60 case, log đổi thành `adaptive-v2`. Xem mục commit 6 |
 | 7 | `1d55c06` | 13/11/2026 | Ghi commit 6 vào file này | Không, chỉ là tài liệu |
-| 8 | (commit ghi mục này) | 14/11/2026 | Tạo nhánh tích hợp `minh/integration`; thêm mục "Đọc trước" ở đầu file này và một dòng trỏ tới file này ở đầu `README.md` | Không, chỉ là tài liệu |
+| 8 | `2d6b9a2` | 14/11/2026 | Tạo nhánh tích hợp `minh/integration`; thêm mục "Đọc trước" ở đầu file này và một dòng trỏ tới file này ở đầu `README.md` | Không, chỉ là tài liệu |
+| 9 | (commit ghi mục này) | 14/11/2026 | Ghi chú việc đưa thẳng lên `main` (theo yêu cầu của Minh), sửa dòng trỏ trong `README.md` cho khớp | Không, chỉ là tài liệu |
 
 ---
 
@@ -252,4 +255,5 @@ Số này tính bằng một mô hình tính tay (`native/model_scenarios.py`, n
 - Muốn nhận code bằng pull request, hay tự kéo nhánh từ repo của Minh?
 - Ai làm mục 1 (cô lập lỗi theo vùng) và phần criticality + thu hồi theo áp lực?
 - *(Bổ sung 14/11.)* Gộp bằng `git merge --ff-only` hay qua pull request? Minh không tự đụng vào `main`.
+  *(Cập nhật cùng ngày: Minh đã quyết định đưa thẳng lên `main` để mọi người mở link repo là thấy code; xem ghi chú ở đầu mục "Đọc trước". Nếu Tùng không đồng ý, báo Minh để `git revert`.)*
 - *(Bổ sung sau commit 4.)* Mục 1 Minh đã làm ở nhánh `minh/d10-region-isolation`. Tùng xem thiết kế guard + `ah_reset_group` có ổn không, nhất là việc guard lấy 16 byte trong mỗi vùng.
