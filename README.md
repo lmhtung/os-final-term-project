@@ -33,6 +33,28 @@ Chi tiết thuật toán, bất biến và giới hạn nằm trong [DESIGN_ADAP
 - Arena sử dụng RAM nội; bộ thử không yêu cầu PSRAM hoặc camera.
 - VS Code với extension ESP-IDF hoặc terminal đã kích hoạt môi trường ESP-IDF.
 
+### Heap Lab qua UART
+
+Heap Lab là giao diện Windows để quan sát bộ nhớ trên ESP32-S3. Giao diện hiển thị vùng riêng, vùng chung, các ô đang dùng, khối trống, header và guard dựa trên ảnh chụp trạng thái do firmware gửi. Có thể chạy một kịch bản có sẵn hoặc chọn nhóm A/B, số byte và số buffer cần cấp phát.
+
+1. Trong SDK Configuration Editor, mở **OS project demonstrations** và bật **Interactive heap lab over UART**. Dùng cấu hình console UART và tắt chế độ pool khối cố định.
+2. Lưu cấu hình, build rồi flash qua UART bằng ESP-IDF. Ví dụ dùng `idf.py -p COM7 flash` với đúng cổng COM của bo.
+3. Đóng IDF Monitor nếu đang mở. Từ ESP-IDF Terminal tại thư mục dự án, chạy:
+
+```powershell
+python tools/heap_lab.py --port COM7
+```
+
+Chọn cổng và nhấn **Kết nối**. Giao diện cần Python có Tkinter và pySerial. Tốc độ mặc định là 115200 baud; dùng `--baud` nếu đã cấu hình tốc độ console khác.
+
+Firmware dành cho GUI in `HEAP_LAB_READY,1` khi khởi động. Nếu log in `SUITE_BEGIN,adaptive-v2`, bo đang chạy bộ thực nghiệm mặc định. Bật **Interactive heap lab over UART** trong cấu hình mà VS Code đang dùng, lưu, build và flash lại. Sau khi kiểm tra dấu hiệu khởi động bằng IDF Monitor, thoát monitor bằng `Ctrl+]` để GUI có thể mở cùng cổng.
+
+- **Kịch bản có sẵn**: A thử cấp phát trước, sau đó đến B. Các buffer thành công được giữ để quan sát sơ đồ. Bộ đếm theo nhóm phân biệt thiếu khối, vượt hạn mức và chèn lỗi.
+- **Cấp phát thủ công**: nhập từ 1 đến 8192 byte mỗi buffer và từ 1 đến 40 buffer. Mỗi buffer thành công có mã để chọn và giải phóng riêng.
+- **Giải phóng hết**: trả toàn bộ buffer và đặt lại bộ đếm. Cần arena trống để áp dụng chính sách khác hoặc chạy kịch bản mới.
+
+Heap Lab chạy các thao tác cấp phát tuần tự để quan sát trạng thái. Để thu số liệu so sánh và timing theo bộ thử hai lõi, tắt **Interactive heap lab over UART**, build và flash firmware suite.
+
 ### VS Code
 
 1. Mở thư mục `B:\OS\os-btl`.

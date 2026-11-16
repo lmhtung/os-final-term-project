@@ -345,26 +345,63 @@ done:
     return result;
 }
 
-ah_result_t ah_get_stats(ah_stats_t *out)
+static ah_result_t snapshot_locked(ah_stats_t *out, ah_map_t *map)
 {
-    if (!lock || !out) return AH_INVALID;
-    xSemaphoreTake(lock, portMAX_DELAY);
-    if (!ready) { xSemaphoreGive(lock); return AH_INVALID; }
     const bool ok = validate_locked();
     memset(out, 0, sizeof(*out));
     out->policy = policy; out->header_bytes = HEADER; out->guard_bytes = AH_GUARD_BYTES;
     memcpy(out->group, gs, sizeof(gs));
+    if (map) {
+        map->region_count = heap_count;
+        map->cells[AH_MAP_CELLS] = '\0';
+    }
     for (size_t i = 0; i < heap_count; ++i) {
-        if (heaps[i].faulted) { out->faulted_regions |= 1u << i; continue; }
-        for (block_t *b = heaps[i].free; b; b = b->next) {
+        const heap_t *h = &heaps[i];
+        if (map) {
+            map->region_bytes[i] = h->bytes + AH_GUARD_BYTES;
+            char *region = map->cells + (h->base - arena) / AH_ALIGNMENT;
+            memset(region, h->faulted ? 'X' : '.', h->bytes / AH_ALIGNMENT);
+            memset(region + h->bytes / AH_ALIGNMENT, 'G', AH_GUARD_BYTES / AH_ALIGNMENT);
+        }
+        if (h->faulted) {
+            out->faulted_regions |= 1u << i;
+            continue;
+        }
+        for (block_t *b = h->free; b; b = b->next) {
             size_t payload = b->span - HEADER;
             out->free_payload_bytes += payload;
             if (payload > out->largest_free_payload_bytes) out->largest_free_payload_bytes = payload;
+            if (map) memset(map->cells + ((uint8_t *)b - arena) / AH_ALIGNMENT, 'H', HEADER / AH_ALIGNMENT);
         }
-        for (block_t *b = heaps[i].used; b; b = b->next) ++out->live_blocks;
+        for (block_t *b = h->used; b; b = b->next) {
+            ++out->live_blocks;
+            if (map) {
+                char *start = map->cells + ((uint8_t *)b - arena) / AH_ALIGNMENT;
+                memset(start, 'H', HEADER / AH_ALIGNMENT);
+                memset(start + HEADER / AH_ALIGNMENT, b->owner == 1 ? 'A' : 'B',
+                       (b->span - HEADER) / AH_ALIGNMENT);
+            }
+        }
     }
-    xSemaphoreGive(lock);
     return ok ? AH_OK : AH_CORRUPT;
+}
+
+ah_result_t ah_get_stats(ah_stats_t *out)
+{
+    if (!lock || !out) return AH_INVALID;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    ah_result_t result = ready ? snapshot_locked(out, NULL) : AH_INVALID;
+    xSemaphoreGive(lock);
+    return result;
+}
+
+ah_result_t ah_get_map(ah_map_t *out)
+{
+    if (!lock || !out) return AH_INVALID;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    ah_result_t result = ready ? snapshot_locked(&out->stats, out) : AH_INVALID;
+    xSemaphoreGive(lock);
+    return result;
 }
 
 ah_result_t ah_validate(void)

@@ -2,6 +2,13 @@ menu "OS project demonstrations"
     config APP_LEGACY_POOL_DEMO
         bool "Run the original fixed-block pool demo"
         default n
+    config APP_INTERACTIVE_HEAP_LAB
+        bool "Interactive heap lab over UART"
+        depends on ESP_CONSOLE_UART && !APP_LEGACY_POOL_DEMO
+        default n
+        help
+            Run the UART interface for tools/heap_lab.py. Turn this off to run
+            the automated experiment suite at boot.
     config APP_EXPERIMENT_REPEATS
         int "Repetitions per policy and scenario"
         range 1 20

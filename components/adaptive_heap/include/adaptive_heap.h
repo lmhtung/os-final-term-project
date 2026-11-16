@@ -31,6 +31,14 @@ typedef struct {
     ah_group_stats_t group[AH_GROUPS];
 } ah_stats_t;
 
+#define AH_MAP_CELLS (AH_ARENA_BYTES / AH_ALIGNMENT)
+typedef struct {
+    ah_stats_t stats;
+    size_t region_bytes[3], region_count;
+    /* One character per aligned cell: A/B held, . free, H header, G guard, X faulted. */
+    char cells[AH_MAP_CELLS + 1];
+} ah_map_t;
+
 /* Init once before workers. APIs are task-context only; pointer outputs must be valid. */
 bool ah_init(void);
 /* Workers must be quiescent. Refuses reset while any allocation is live, including bytes
@@ -41,6 +49,8 @@ ah_result_t ah_free(ah_group_t group, void *ptr);
 /* Fills *out even when it returns AH_CORRUPT; quarantined regions are left out of the
  * free/live totals and reported in faulted_regions. */
 ah_result_t ah_get_stats(ah_stats_t *out);
+/* Returns the region layout and statistics from a single locked snapshot. */
+ah_result_t ah_get_map(ah_map_t *out);
 /* Checks every region. A region that fails is quarantined: later calls that need it return
  * AH_CORRUPT, while calls that only use other regions keep working. */
 ah_result_t ah_validate(void);
