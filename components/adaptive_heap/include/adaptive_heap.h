@@ -39,6 +39,15 @@ typedef struct {
     char cells[AH_MAP_CELLS + 1];
 } ah_map_t;
 
+/* Each instance owns an 8 KiB arena, its metadata and its mutex. */
+typedef struct ah_instance ah_instance_t;
+ah_instance_t *ah_instance_get(size_t index);
+bool ah_instance_init(ah_instance_t *instance);
+ah_result_t ah_instance_reset(ah_instance_t *instance, ah_policy_t policy);
+ah_result_t ah_instance_alloc(ah_instance_t *instance, ah_group_t group, size_t bytes, void **out);
+ah_result_t ah_instance_free(ah_instance_t *instance, ah_group_t group, void *ptr);
+ah_result_t ah_instance_get_stats(ah_instance_t *instance, ah_stats_t *out);
+
 /* Init once before workers. APIs are task-context only; pointer outputs must be valid. */
 bool ah_init(void);
 /* Workers must be quiescent. Refuses reset while any allocation is live, including bytes

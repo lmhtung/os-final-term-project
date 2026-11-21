@@ -3,6 +3,7 @@
 
 void legacy_pool_demo_run(void);
 void heap_lab_run(void);
+void camera_demo_run(void);
 
 void app_main(void)
 {
@@ -10,6 +11,8 @@ void app_main(void)
     legacy_pool_demo_run();
 #elif defined(CONFIG_APP_INTERACTIVE_HEAP_LAB)
     heap_lab_run();
+#elif defined(CONFIG_APP_CAMERA_DEMO)
+    camera_demo_run();
 #else
     adaptive_experiments_run();
 #endif

@@ -117,8 +117,8 @@ class HeapLab:
         self.cards = []
 
         root.title("Heap Lab · ESP32-S3")
-        root.geometry("1180x805")
-        root.minsize(1050, 760)
+        root.geometry("1400x805")
+        root.minsize(1180, 760)
         root.configure(bg=BG)
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.style()
@@ -169,8 +169,11 @@ class HeapLab:
         side.grid(row=0, column=0, padx=(0, 12), sticky="ns")
         main = tk.Frame(body, bg=BG)
         main.grid(row=0, column=1, sticky="nsew")
+        log = self.panel(body)
+        log.grid(row=0, column=2, padx=(12, 0), sticky="nsew")
         self.sidebar(side)
         self.dashboard(main)
+        self.activity_log(log)
 
         footer = tk.Frame(self.root, bg="#dee7f4", padx=16, pady=6)
         footer.pack(fill="x")
@@ -244,12 +247,24 @@ class HeapLab:
 
         usage = self.panel(main)
         usage.pack(fill="x")
+        usage.grid_columnconfigure(1, weight=1)
         self.group_labels = []
+        group_values = []
         for idx, color in enumerate(("A", "B")):
             text = tk.StringVar(value="—")
             self.group_labels.append(text)
             self.label(usage, f"Nhóm {color}", fg=COLORS[color], bold=True).grid(row=idx, column=0, sticky="w", padx=(0, 12))
-            self.label(usage, variable=text, fg=INK, wraplength=640).grid(row=idx, column=1, sticky="w")
+            value = self.label(usage, variable=text, fg=INK)
+            value.grid(row=idx, column=1, sticky="ew")
+            group_values.append(value)
+
+        def wrap_group_values(event):
+            horizontal_padding = 2 * (int(usage["padx"]) + int(usage["highlightthickness"]))
+            width = max(1, event.width - usage.grid_bbox(0, 0)[2] - horizontal_padding)
+            for value in group_values:
+                value.configure(wraplength=width)
+
+        usage.bind("<Configure>", wrap_group_values)
 
         live = self.panel(main)
         live.pack(fill="both", expand=True, pady=(9, 0))
@@ -273,12 +288,17 @@ class HeapLab:
         scrollbar.pack(side="right", fill="y")
         self.blocks.bind("<<TreeviewSelect>>", lambda _event: self.update_controls())
 
-        log = self.panel(main)
-        log.pack(fill="x", pady=(9, 0))
-        self.label(log, "Nhật ký thao tác", size=11, bold=True).pack(anchor="w")
-        self.log = tk.Listbox(log, height=3, relief="flat", bg=PAPER, fg=MUTED,
-                              font=("Segoe UI", 9), highlightthickness=0, activestyle="none")
-        self.log.pack(fill="x")
+    def activity_log(self, panel):
+        self.label(panel, "Nhật ký thao tác", size=13, bold=True).pack(anchor="w", pady=(0, 8))
+        entries = tk.Frame(panel, bg=PAPER)
+        entries.pack(fill="both", expand=True)
+        self.log = tk.Text(entries, width=35, height=1, wrap="word", state="disabled",
+                           bg=PAPER, fg=MUTED, font=("Segoe UI", 9), relief="flat",
+                           highlightthickness=0, padx=0, pady=2, spacing3=8)
+        scrollbar = ttk.Scrollbar(entries, orient="vertical", command=self.log.yview)
+        self.log.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.log.pack(side="left", fill="both", expand=True)
 
     def scan_ports(self):
         self.ports.configure(values=[item.device for item in list_ports.comports()])
@@ -455,9 +475,11 @@ class HeapLab:
 
     def note(self, message):
         self.command_text.set(message)
-        self.log.insert(0, message)
-        if self.log.size() > 30:
-            self.log.delete(30, "end")
+        self.log.configure(state="normal")
+        self.log.insert("1.0", " ".join(message.splitlines()) + "\n")
+        self.log.delete("31.0", "end")
+        self.log.see("1.0")
+        self.log.configure(state="disabled")
 
     def close(self):
         if self.connection:

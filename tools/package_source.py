@@ -12,7 +12,8 @@ def main():
     parser.add_argument("--out", type=Path, default=project.parent / "deliverables" / ("os-btl-adaptive-source-" + dt.datetime.now().strftime("%Y%m%d-%H%M%S") + ".zip"))
     args = parser.parse_args()
     files = []
-    for name in ("CMakeLists.txt", "sdkconfig", "sdkconfig.defaults", "README.md", "README_DEMO.md", "DESIGN_ADAPTIVE.md", "BUILD_VERIFICATION.md"):
+    for name in ("CMakeLists.txt", "sdkconfig", "sdkconfig.defaults", "sdkconfig.camera.defaults",
+                 "README.md", "README_DEMO.md", "DESIGN_ADAPTIVE.md", "BUILD_VERIFICATION.md"):
         path = project / name
         if path.is_file():
             files.append(path)

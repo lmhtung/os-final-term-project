@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Heap Lab · So sánh hai heap trên ESP32-S3</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span> Heap Lab <span class="board">ESP32-S3</span></div>
+      <div class="connection" id="connection">Đang tìm cổng UART…</div>
+    </div>
+  </header>
+  <main>
+    <section class="intro">
+      <h1>Ảnh và nhiệt độ trực tiếp</h1>
+      <p>Hai lõi ESP32-S3 lọc trung vị 7 × 7 rồi dò biên Sobel trên cùng một ảnh. Theo dõi bên nào gửi đủ ảnh trước và bên nào giữ được bản tin nhiệt độ khi bộ nhớ chịu tải.</p>
+    </section>
+
+    <section class="setup" aria-labelledby="setup-title">
+      <figure class="input-preview">
+        <canvas id="source" width="160" height="96" role="img" aria-label="Ảnh xám được gửi tới ESP32-S3"></canvas>
+      </figure>
+      <div class="image-controls">
+        <h2 id="setup-title">Ảnh đầu vào</h2>
+        <p id="image-name">Đang nạp ảnh mẫu…</p>
+        <div class="image-actions">
+          <label for="upload" class="button">Chọn ảnh</label>
+          <input id="upload" type="file" accept="image/*" class="visually-hidden">
+          <button type="button" id="sample" class="plain">Dùng ảnh mẫu</button>
+        </div>
+      </div>
+      <div class="hardware-controls">
+        <label for="port">Cổng USB–UART</label>
+        <div class="port-row">
+          <select id="port"><option value="">Đang tìm cổng…</option></select>
+          <button type="button" id="refresh">Quét lại</button>
+        </div>
+        <button type="button" class="primary" id="run" disabled>Chạy so sánh trên bo</button>
+      </div>
+    </section>
+    <p class="run-status" id="run-status" role="status">Cắm bo qua cổng UART để chạy.</p>
+
+    <section class="comparison" aria-label="Kết quả theo chính sách bộ nhớ">
+      <article class="policy shared" data-mode="SHARED">
+        <div class="policy-header">
+          <div>
+            <h2>Heap chung</h2>
+            <p>8 KiB dùng chung cho A và B</p>
+            <p class="core" data-field="core"></p>
+          </div>
+          <span class="policy-state" data-field="state">Chờ chạy</span>
+        </div>
+        <div class="policy-content">
+          <div class="image-result">
+            <h3>Ảnh lọc biên</h3>
+            <div class="output"><canvas width="160" height="96" role="img" aria-label="Ảnh lọc biên với heap chung"></canvas><span>Chờ ảnh từ bo</span></div>
+            <p class="image-note" data-field="memory">Từng ô ảnh sẽ hiện khi bo gửi về.</p>
+          </div>
+          <div class="measurements">
+            <div class="metric"><span>A · Ô ảnh nhận được</span><strong data-field="tiles">—</strong><progress data-field="progress" max="60" value="0" aria-label="Tiến độ nhận ảnh từ heap chung"></progress></div>
+            <div class="metric"><span>B · Bản tin trong lượt</span><strong data-field="samples">—</strong></div>
+            <div class="metric"><span>Thời gian nhận đủ ảnh</span><strong data-field="time">—</strong><small data-field="batches"></small></div>
+          </div>
+        </div>
+        <div class="timeline">
+          <h3>Bản tin nhiệt độ</h3>
+          <ol tabindex="0" aria-label="Trước, trong và sau lượt chạy với heap chung"></ol>
+        </div>
+      </article>
+      <article class="policy adaptive" data-mode="ADAPTIVE">
+        <div class="policy-header">
+          <div>
+            <h2>Adaptive Heap</h2>
+            <p>A và B mỗi nhóm 2 KiB riêng, thêm 4 KiB chung</p>
+            <p class="core" data-field="core"></p>
+          </div>
+          <span class="policy-state" data-field="state">Chờ chạy</span>
+        </div>
+        <div class="policy-content">
+          <div class="image-result">
+            <h3>Ảnh lọc biên</h3>
+            <div class="output"><canvas width="160" height="96" role="img" aria-label="Ảnh lọc biên với Adaptive Heap"></canvas><span>Chờ ảnh từ bo</span></div>
+            <p class="image-note" data-field="memory">Từng ô ảnh sẽ hiện khi bo gửi về.</p>
+          </div>
+          <div class="measurements">
+            <div class="metric"><span>A · Ô ảnh nhận được</span><strong data-field="tiles">—</strong><progress data-field="progress" max="60" value="0" aria-label="Tiến độ nhận ảnh từ Adaptive Heap"></progress></div>
+            <div class="metric"><span>B · Bản tin trong lượt</span><strong data-field="samples">—</strong></div>
+            <div class="metric"><span>Thời gian nhận đủ ảnh</span><strong data-field="time">—</strong><small data-field="batches"></small></div>
+          </div>
+        </div>
+        <div class="timeline">
+          <h3>Bản tin nhiệt độ</h3>
+          <ol tabindex="0" aria-label="Trước, trong và sau lượt chạy với Adaptive Heap"></ol>
+        </div>
+      </article>
+    </section>
+
+    <section class="result" id="result" aria-live="polite" hidden>
+      <h2>So sánh từ lượt chạy</h2>
+      <p id="result-text"></p>
+      <p id="integrity"></p>
+    </section>
+    <footer>Mỗi chính sách có arena 8 KiB riêng. A trả buffer sau khi máy tính xác nhận từng lô. B thử gửi bản tin mỗi 250 ms. Mốc nhận đủ ảnh tính từ lúc hai lõi được phát lệnh chạy tới xác nhận cuối qua cổng UART dùng chung.</footer>
+  </main>
+  <template id="tick-template">
+    <li><span class="tick-caption"></span><strong>—</strong><small></small></li>
+  </template>
+</body>
+</html>

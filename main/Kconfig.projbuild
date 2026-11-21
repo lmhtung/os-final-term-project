@@ -9,6 +9,13 @@ menu "OS project demonstrations"
         help
             Run the UART interface for tools/heap_lab.py. Turn this off to run
             the automated experiment suite at boot.
+    config APP_CAMERA_DEMO
+        bool "Image processing and temperature demo over UART"
+        depends on ESP_CONSOLE_UART && !FREERTOS_UNICORE && !APP_LEGACY_POOL_DEMO && !APP_INTERACTIVE_HEAP_LAB
+        default n
+        help
+            Compare two memory policies while both ESP32-S3 cores filter the same
+            image and a periodic task reports chip temperature over UART.
     config APP_EXPERIMENT_REPEATS
         int "Repetitions per policy and scenario"
         range 1 20

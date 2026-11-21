@@ -2,6 +2,9 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
 
 /* AH_VALIDATE_EACH_CALL
  *   1 (default): ah_alloc/ah_free validate the regions they touch on every call.
@@ -11,9 +14,6 @@
  * The Kconfig option is phrased as "skip" so a missing option keeps the safe
  * original behaviour. Native builds may pass -DAH_VALIDATE_EACH_CALL=0/1. */
 #ifndef AH_VALIDATE_EACH_CALL
-#  ifdef ESP_PLATFORM
-#    include "sdkconfig.h"
-#  endif
 #  ifdef CONFIG_AH_SKIP_PER_CALL_VALIDATION
 #    define AH_VALIDATE_EACH_CALL 0
 #  else
@@ -47,21 +47,34 @@ typedef struct {
     size_t charged[AH_GROUPS];
     bool faulted;
 } heap_t;
-static _Alignas(AH_ALIGNMENT) uint8_t arena[AH_ARENA_BYTES];
-static heap_t heaps[3];
-static size_t heap_count;
-static ah_policy_t policy;
-static ah_group_stats_t gs[AH_GROUPS];
-static StaticSemaphore_t lock_storage;
-static SemaphoreHandle_t lock;
-static bool ready;
-static uint32_t inject_n, inject_mask, inject_count[AH_GROUPS];
+struct ah_instance {
+    _Alignas(AH_ALIGNMENT) uint8_t arena[AH_ARENA_BYTES];
+    heap_t heaps[3];
+    size_t heap_count;
+    ah_policy_t policy;
+    ah_group_stats_t gs[AH_GROUPS];
+    StaticSemaphore_t lock_storage;
+    SemaphoreHandle_t lock;
+    bool ready;
+    uint32_t inject_n, inject_mask, inject_count[AH_GROUPS];
+};
+
+#ifdef CONFIG_APP_CAMERA_DEMO
+static ah_instance_t instances[2];
+#else
+static ah_instance_t instances[1];
+#endif
+
+ah_instance_t *ah_instance_get(size_t index)
+{
+    return index < sizeof(instances) / sizeof(instances[0]) ? &instances[index] : NULL;
+}
 
 static bool group_ok(ah_group_t group) { return group == AH_A || group == AH_B; }
-static size_t reserve(void) { return policy == AH_ADAPTIVE ? 2048 : 0; }
-static size_t maximum(void) { return policy == AH_SHARED ? 8192 : policy == AH_STATIC ? 4096 : 6144; }
-static size_t initial_grant(void) { return policy == AH_ADAPTIVE ? 2048 : maximum(); }
-static bool is_borrow_region(size_t i) { return policy == AH_ADAPTIVE && i == 2; }
+static size_t reserve(const ah_instance_t *instance) { return instance->policy == AH_ADAPTIVE ? 2048 : 0; }
+static size_t maximum(const ah_instance_t *instance) { return instance->policy == AH_SHARED ? 8192 : instance->policy == AH_STATIC ? 4096 : 6144; }
+static size_t initial_grant(const ah_instance_t *instance) { return instance->policy == AH_ADAPTIVE ? 2048 : maximum(instance); }
+static bool is_borrow_region(const ah_instance_t *instance, size_t i) { return instance->policy == AH_ADAPTIVE && i == 2; }
 
 static bool header_ok(const heap_t *h, const block_t *b)
 {
@@ -89,9 +102,9 @@ static bool list_ok(const heap_t *h, block_t *b, bool used)
     return true;
 }
 
-static bool region_ok(size_t i)
+static bool region_ok(ah_instance_t *instance, size_t i)
 {
-    heap_t *h = &heaps[i];
+    heap_t *h = &instance->heaps[i];
     size_t charged[AH_GROUPS] = {0};
     for (size_t k = 0; k < AH_GUARD_BYTES; ++k) if (h->base[h->bytes + k] != GUARD_BYTE) return false;
     if (!list_ok(h, h->free, false) || !list_ok(h, h->used, true)) return false;
@@ -106,7 +119,7 @@ static bool region_ok(size_t i)
         else {
             size_t g = b->owner - 1;
             charged[g] += b->span;
-            if (policy != AH_SHARED && i < 2 && i != g) return false;
+            if (instance->policy != AH_SHARED && i < 2 && i != g) return false;
             u = u->next;
         }
     }
@@ -116,35 +129,35 @@ static bool region_ok(size_t i)
 }
 
 /* Validates region i unless it is already quarantined; quarantines it on failure. */
-static bool check_region(size_t i)
+static bool check_region(ah_instance_t *instance, size_t i)
 {
-    if (!heaps[i].faulted && !region_ok(i)) heaps[i].faulted = true;
-    return !heaps[i].faulted;
+    if (!instance->heaps[i].faulted && !region_ok(instance, i)) instance->heaps[i].faulted = true;
+    return !instance->heaps[i].faulted;
 }
 
 /* Per-call path: in measurement builds only the quarantine flag is consulted. */
-static bool region_usable(size_t i) { return AH_VALIDATE_EACH_CALL ? check_region(i) : !heaps[i].faulted; }
+static bool region_usable(ah_instance_t *instance, size_t i) { return AH_VALIDATE_EACH_CALL ? check_region(instance, i) : !instance->heaps[i].faulted; }
 
 /* Group counters must agree with the per-region charges. Neither lives in the arena. */
-static bool totals_ok(void)
+static bool totals_ok(const ah_instance_t *instance)
 {
     for (size_t g = 0; g < AH_GROUPS; ++g) {
         size_t live = 0, borrowed = 0;
-        for (size_t i = 0; i < heap_count; ++i) {
-            live += heaps[i].charged[g];
-            if (is_borrow_region(i)) borrowed += heaps[i].charged[g];
+        for (size_t i = 0; i < instance->heap_count; ++i) {
+            live += instance->heaps[i].charged[g];
+            if (is_borrow_region(instance, i)) borrowed += instance->heaps[i].charged[g];
         }
-        if (live != gs[g].live_bytes || borrowed != gs[g].borrowed_bytes || live > gs[g].limit_bytes ||
-            gs[g].granted_bytes != initial_grant() + borrowed) return false;
+        if (live != instance->gs[g].live_bytes || borrowed != instance->gs[g].borrowed_bytes || live > instance->gs[g].limit_bytes ||
+            instance->gs[g].granted_bytes != initial_grant(instance) + borrowed) return false;
     }
     return true;
 }
 
 /* Checks every region (quarantining the bad ones) and the totals. */
-static bool validate_locked(void)
+static bool validate_locked(ah_instance_t *instance)
 {
-    bool ok = totals_ok();
-    for (size_t i = 0; i < heap_count; ++i) if (!check_region(i)) ok = false;
+    bool ok = totals_ok(instance);
+    for (size_t i = 0; i < instance->heap_count; ++i) if (!check_region(instance, i)) ok = false;
     return ok;
 }
 
@@ -157,49 +170,49 @@ static void region_init(heap_t *h)
     memset(h->base + h->bytes, GUARD_BYTE, AH_GUARD_BYTES);
 }
 
-static void uncharge(size_t i, size_t group, size_t bytes)
+static void uncharge(ah_instance_t *instance, size_t i, size_t group, size_t bytes)
 {
-    heaps[i].charged[group] -= bytes;
-    gs[group].live_bytes -= bytes;
-    if (is_borrow_region(i)) {
-        gs[group].borrowed_bytes -= bytes;
-        gs[group].granted_bytes = initial_grant() + gs[group].borrowed_bytes;
+    instance->heaps[i].charged[group] -= bytes;
+    instance->gs[group].live_bytes -= bytes;
+    if (is_borrow_region(instance, i)) {
+        instance->gs[group].borrowed_bytes -= bytes;
+        instance->gs[group].granted_bytes = initial_grant(instance) + instance->gs[group].borrowed_bytes;
     }
 }
 
-bool ah_init(void)
+bool ah_instance_init(ah_instance_t *instance)
 {
-    if (lock != NULL) return false;
-    lock = xSemaphoreCreateMutexStatic(&lock_storage);
-    return lock != NULL;
+    if (!instance || instance->lock != NULL) return false;
+    instance->lock = xSemaphoreCreateMutexStatic(&instance->lock_storage);
+    return instance->lock != NULL;
 }
 
-ah_result_t ah_reset(ah_policy_t selected)
+ah_result_t ah_instance_reset(ah_instance_t *instance, ah_policy_t selected)
 {
-    if (!lock || selected < AH_SHARED || selected > AH_ADAPTIVE) return AH_INVALID;
-    xSemaphoreTake(lock, portMAX_DELAY);
+    if (!instance || !instance->lock || selected < AH_SHARED || selected > AH_ADAPTIVE) return AH_INVALID;
+    xSemaphoreTake(instance->lock, portMAX_DELAY);
     /* Live bytes, including bytes stranded in a quarantined region, must first be
      * released with ah_free or ah_reset_group. A region's contents are rebuilt here,
      * so a fault with nothing charged to it does not block the reset. */
-    if (ready && (gs[0].live_bytes || gs[1].live_bytes)) { xSemaphoreGive(lock); return AH_BUSY; }
-    policy = selected;
-    memset(heaps, 0, sizeof(heaps));
-    memset(gs, 0, sizeof(gs));
-    memset(inject_count, 0, sizeof(inject_count));
-    inject_n = inject_mask = 0;
-    heap_count = selected == AH_SHARED ? 1 : selected == AH_STATIC ? 2 : 3;
+    if (instance->ready && (instance->gs[0].live_bytes || instance->gs[1].live_bytes)) { xSemaphoreGive(instance->lock); return AH_BUSY; }
+    instance->policy = selected;
+    memset(instance->heaps, 0, sizeof(instance->heaps));
+    memset(instance->gs, 0, sizeof(instance->gs));
+    memset(instance->inject_count, 0, sizeof(instance->inject_count));
+    instance->inject_n = instance->inject_mask = 0;
+    instance->heap_count = selected == AH_SHARED ? 1 : selected == AH_STATIC ? 2 : 3;
     size_t offset = 0;
-    for (size_t i = 0; i < heap_count; ++i) {
+    for (size_t i = 0; i < instance->heap_count; ++i) {
         size_t bytes = selected == AH_SHARED ? 8192 : selected == AH_STATIC ? 4096 : (i == 2 ? 4096 : 2048);
-        heaps[i].base = arena + offset; heaps[i].bytes = bytes - AH_GUARD_BYTES;
-        region_init(&heaps[i]);
+        instance->heaps[i].base = instance->arena + offset; instance->heaps[i].bytes = bytes - AH_GUARD_BYTES;
+        region_init(&instance->heaps[i]);
         offset += bytes;
     }
     for (size_t g = 0; g < AH_GROUPS; ++g) {
-        gs[g].limit_bytes = maximum(); gs[g].granted_bytes = initial_grant();
+        instance->gs[g].limit_bytes = maximum(instance); instance->gs[g].granted_bytes = initial_grant(instance);
     }
-    ready = true;
-    xSemaphoreGive(lock);
+    instance->ready = true;
+    xSemaphoreGive(instance->lock);
     return AH_OK;
 }
 
@@ -228,56 +241,56 @@ static block_t *take_block(heap_t *h, size_t needed, size_t budget)
     return NULL;
 }
 
-ah_result_t ah_alloc(ah_group_t group, size_t bytes, void **out)
+ah_result_t ah_instance_alloc(ah_instance_t *instance, ah_group_t group, size_t bytes, void **out)
 {
     if (!out) return AH_INVALID;
     *out = NULL;
-    if (!lock || !group_ok(group) || bytes == 0 || bytes > SIZE_MAX - HEADER - (AH_ALIGNMENT - 1)) return AH_INVALID;
+    if (!instance || !instance->lock || !group_ok(group) || bytes == 0 || bytes > SIZE_MAX - HEADER - (AH_ALIGNMENT - 1)) return AH_INVALID;
     const size_t needed = (bytes + HEADER + AH_ALIGNMENT - 1) & ~(AH_ALIGNMENT - 1);
-    xSemaphoreTake(lock, portMAX_DELAY);
+    xSemaphoreTake(instance->lock, portMAX_DELAY);
     ah_result_t result = AH_OK;
-    if (!ready) { result = AH_INVALID; goto done; }
-    if (AH_VALIDATE_EACH_CALL && !totals_ok()) { result = AH_CORRUPT; goto done; }
-    ah_group_stats_t *g = &gs[group];
+    if (!instance->ready) { result = AH_INVALID; goto done; }
+    if (AH_VALIDATE_EACH_CALL && !totals_ok(instance)) { result = AH_CORRUPT; goto done; }
+    ah_group_stats_t *g = &instance->gs[group];
     ++g->attempts;
-    size_t source = policy == AH_SHARED ? 0 : (size_t)group;
+    size_t source = instance->policy == AH_SHARED ? 0 : (size_t)group;
     /* Only the regions this request can use are checked, so a fault elsewhere does not stop it. */
-    if (!region_usable(source)) { ++g->corrupt_failures; result = AH_CORRUPT; goto done; }
-    if (inject_n && (inject_mask & (1u << group)) && ++inject_count[group] % inject_n == 0) {
+    if (!region_usable(instance, source)) { ++g->corrupt_failures; result = AH_CORRUPT; goto done; }
+    if (instance->inject_n && (instance->inject_mask & (1u << group)) && ++instance->inject_count[group] % instance->inject_n == 0) {
         ++g->injected; result = AH_INJECTED; goto done;
     }
     size_t budget = g->limit_bytes - g->live_bytes;
     if (needed > budget) { ++g->quota_failures; result = AH_QUOTA; goto done; }
-    block_t *b = take_block(&heaps[source], needed, budget);
-    if (!b && policy == AH_ADAPTIVE) {
+    block_t *b = take_block(&instance->heaps[source], needed, budget);
+    if (!b && instance->policy == AH_ADAPTIVE) {
         source = 2;
-        if (!region_usable(source)) { ++g->corrupt_failures; result = AH_CORRUPT; goto done; }
-        b = take_block(&heaps[source], needed, budget);
+        if (!region_usable(instance, source)) { ++g->corrupt_failures; result = AH_CORRUPT; goto done; }
+        b = take_block(&instance->heaps[source], needed, budget);
     }
     if (!b) { ++g->no_memory; result = AH_NO_MEMORY; goto done; }
     b->requested = bytes; b->owner = (uint32_t)group + 1;
-    heaps[source].charged[group] += b->span;
+    instance->heaps[source].charged[group] += b->span;
     g->live_bytes += b->span;
     if (g->live_bytes > g->peak_bytes) g->peak_bytes = g->live_bytes;
-    if (is_borrow_region(source)) {
+    if (is_borrow_region(instance, source)) {
         g->borrowed_bytes += b->span;
         if (g->borrowed_bytes > g->peak_borrowed_bytes) g->peak_borrowed_bytes = g->borrowed_bytes;
-        g->granted_bytes = initial_grant() + g->borrowed_bytes;
+        g->granted_bytes = initial_grant(instance) + g->borrowed_bytes;
     }
     ++g->successes;
     *out = (uint8_t *)b + HEADER;
 done:
-    xSemaphoreGive(lock);
+    xSemaphoreGive(instance->lock);
     return result;
 }
 
 /* Unlinks *link from region i's used list and returns it to the free list, coalescing. */
-static void release_block(size_t i, block_t **link)
+static void release_block(ah_instance_t *instance, size_t i, block_t **link)
 {
-    heap_t *h = &heaps[i];
+    heap_t *h = &instance->heaps[i];
     block_t *b = *link;
     *link = b->next;
-    uncharge(i, b->owner - 1, b->span);
+    uncharge(instance, i, b->owner - 1, b->span);
     b->owner = 0; b->requested = 0;
     block_t *prev = NULL, **free_link = &h->free;
     while (*free_link && (uintptr_t)*free_link < (uintptr_t)b) { prev = *free_link; free_link = &prev->next; }
@@ -290,76 +303,78 @@ static void release_block(size_t i, block_t **link)
     }
 }
 
-ah_result_t ah_free(ah_group_t group, void *ptr)
+ah_result_t ah_instance_free(ah_instance_t *instance, ah_group_t group, void *ptr)
 {
-    if (!lock || !group_ok(group)) return AH_INVALID;
-    xSemaphoreTake(lock, portMAX_DELAY);
+    if (!instance || !instance->lock || !group_ok(group)) return AH_INVALID;
+    xSemaphoreTake(instance->lock, portMAX_DELAY);
     ah_result_t result = AH_BAD_POINTER;
-    if (!ready) { result = AH_INVALID; goto done; }
-    if (AH_VALIDATE_EACH_CALL && !totals_ok()) { result = AH_CORRUPT; goto done; }
+    if (!instance->ready) { result = AH_INVALID; goto done; }
+    if (AH_VALIDATE_EACH_CALL && !totals_ok(instance)) { result = AH_CORRUPT; goto done; }
     if (!ptr) { result = AH_OK; goto done; }
-    for (size_t i = 0; i < heap_count; ++i) {
-        heap_t *h = &heaps[i];
-        if ((uint8_t *)ptr < h->base || (uint8_t *)ptr >= h->base + h->bytes) continue;
-        if (!region_usable(i)) { result = AH_CORRUPT; goto done; }
+    for (size_t i = 0; i < instance->heap_count; ++i) {
+        heap_t *h = &instance->heaps[i];
+        const uintptr_t address = (uintptr_t)ptr, base = (uintptr_t)h->base;
+        if (address < base || address - base >= h->bytes) continue;
+        if (!region_usable(instance, i)) { result = AH_CORRUPT; goto done; }
         block_t **link = &h->used;
         while (*link && (void *)((uint8_t *)*link + HEADER) != ptr) link = &(*link)->next;
         if (!*link) break;
         if ((*link)->owner != (uint32_t)group + 1) { result = AH_WRONG_OWNER; goto done; }
-        release_block(i, link);
+        release_block(instance, i, link);
         result = AH_OK; break;
     }
 done:
-    xSemaphoreGive(lock);
+    xSemaphoreGive(instance->lock);
     return result;
 }
 
 ah_result_t ah_reset_group(ah_group_t group)
 {
-    if (!lock || !group_ok(group)) return AH_INVALID;
-    xSemaphoreTake(lock, portMAX_DELAY);
+    ah_instance_t *instance = &instances[0];
+    if (!instance->lock || !group_ok(group)) return AH_INVALID;
+    xSemaphoreTake(instance->lock, portMAX_DELAY);
     ah_result_t result = AH_OK;
-    if (!ready) { result = AH_INVALID; goto done; }
-    if (!totals_ok()) { result = AH_CORRUPT; goto done; }
-    for (size_t i = 0; i < heap_count; ++i) {
-        heap_t *h = &heaps[i];
-        if (check_region(i)) {
+    if (!instance->ready) { result = AH_INVALID; goto done; }
+    if (!totals_ok(instance)) { result = AH_CORRUPT; goto done; }
+    for (size_t i = 0; i < instance->heap_count; ++i) {
+        heap_t *h = &instance->heaps[i];
+        if (check_region(instance, i)) {
             /* Healthy region: free this group's blocks one by one; others keep theirs. */
             block_t **link = &h->used;
             while (*link) {
-                if ((*link)->owner == (uint32_t)group + 1) release_block(i, link);
+                if ((*link)->owner == (uint32_t)group + 1) release_block(instance, i, link);
                 else link = &(*link)->next;
             }
         } else {
             /* Quarantined region: its lists cannot be trusted, so drop the charge without
              * walking them, and rebuild the region once no group holds bytes in it. */
-            uncharge(i, group, h->charged[group]);
+            uncharge(instance, i, group, h->charged[group]);
             size_t remaining = 0;
             for (size_t g = 0; g < AH_GROUPS; ++g) remaining += h->charged[g];
             if (remaining == 0) region_init(h);
         }
     }
-    ++gs[group].group_resets;
+    ++instance->gs[group].group_resets;
 done:
-    xSemaphoreGive(lock);
+    xSemaphoreGive(instance->lock);
     return result;
 }
 
-static ah_result_t snapshot_locked(ah_stats_t *out, ah_map_t *map)
+static ah_result_t snapshot_locked(ah_instance_t *instance, ah_stats_t *out, ah_map_t *map)
 {
-    const bool ok = validate_locked();
+    const bool ok = validate_locked(instance);
     memset(out, 0, sizeof(*out));
-    out->policy = policy; out->header_bytes = HEADER; out->guard_bytes = AH_GUARD_BYTES;
-    memcpy(out->group, gs, sizeof(gs));
+    out->policy = instance->policy; out->header_bytes = HEADER; out->guard_bytes = AH_GUARD_BYTES;
+    memcpy(out->group, instance->gs, sizeof(instance->gs));
     if (map) {
-        map->region_count = heap_count;
+        map->region_count = instance->heap_count;
         map->cells[AH_MAP_CELLS] = '\0';
     }
-    for (size_t i = 0; i < heap_count; ++i) {
-        const heap_t *h = &heaps[i];
+    for (size_t i = 0; i < instance->heap_count; ++i) {
+        const heap_t *h = &instance->heaps[i];
         if (map) {
             map->region_bytes[i] = h->bytes + AH_GUARD_BYTES;
-            char *region = map->cells + (h->base - arena) / AH_ALIGNMENT;
+            char *region = map->cells + (h->base - instance->arena) / AH_ALIGNMENT;
             memset(region, h->faulted ? 'X' : '.', h->bytes / AH_ALIGNMENT);
             memset(region + h->bytes / AH_ALIGNMENT, 'G', AH_GUARD_BYTES / AH_ALIGNMENT);
         }
@@ -371,12 +386,12 @@ static ah_result_t snapshot_locked(ah_stats_t *out, ah_map_t *map)
             size_t payload = b->span - HEADER;
             out->free_payload_bytes += payload;
             if (payload > out->largest_free_payload_bytes) out->largest_free_payload_bytes = payload;
-            if (map) memset(map->cells + ((uint8_t *)b - arena) / AH_ALIGNMENT, 'H', HEADER / AH_ALIGNMENT);
+            if (map) memset(map->cells + ((uint8_t *)b - instance->arena) / AH_ALIGNMENT, 'H', HEADER / AH_ALIGNMENT);
         }
         for (block_t *b = h->used; b; b = b->next) {
             ++out->live_blocks;
             if (map) {
-                char *start = map->cells + ((uint8_t *)b - arena) / AH_ALIGNMENT;
+                char *start = map->cells + ((uint8_t *)b - instance->arena) / AH_ALIGNMENT;
                 memset(start, 'H', HEADER / AH_ALIGNMENT);
                 memset(start + HEADER / AH_ALIGNMENT, b->owner == 1 ? 'A' : 'B',
                        (b->span - HEADER) / AH_ALIGNMENT);
@@ -386,49 +401,78 @@ static ah_result_t snapshot_locked(ah_stats_t *out, ah_map_t *map)
     return ok ? AH_OK : AH_CORRUPT;
 }
 
-ah_result_t ah_get_stats(ah_stats_t *out)
+ah_result_t ah_instance_get_stats(ah_instance_t *instance, ah_stats_t *out)
 {
-    if (!lock || !out) return AH_INVALID;
-    xSemaphoreTake(lock, portMAX_DELAY);
-    ah_result_t result = ready ? snapshot_locked(out, NULL) : AH_INVALID;
-    xSemaphoreGive(lock);
+    if (!instance || !instance->lock || !out) return AH_INVALID;
+    xSemaphoreTake(instance->lock, portMAX_DELAY);
+    ah_result_t result = instance->ready ? snapshot_locked(instance, out, NULL) : AH_INVALID;
+    xSemaphoreGive(instance->lock);
     return result;
 }
 
 ah_result_t ah_get_map(ah_map_t *out)
 {
-    if (!lock || !out) return AH_INVALID;
-    xSemaphoreTake(lock, portMAX_DELAY);
-    ah_result_t result = ready ? snapshot_locked(&out->stats, out) : AH_INVALID;
-    xSemaphoreGive(lock);
+    ah_instance_t *instance = &instances[0];
+    if (!instance->lock || !out) return AH_INVALID;
+    xSemaphoreTake(instance->lock, portMAX_DELAY);
+    ah_result_t result = instance->ready ? snapshot_locked(instance, &out->stats, out) : AH_INVALID;
+    xSemaphoreGive(instance->lock);
     return result;
 }
 
 ah_result_t ah_validate(void)
 {
-    if (!lock) return AH_INVALID;
-    xSemaphoreTake(lock, portMAX_DELAY);
-    ah_result_t r = !ready ? AH_INVALID : validate_locked() ? AH_OK : AH_CORRUPT;
-    xSemaphoreGive(lock); return r;
+    ah_instance_t *instance = &instances[0];
+    if (!instance->lock) return AH_INVALID;
+    xSemaphoreTake(instance->lock, portMAX_DELAY);
+    ah_result_t r = !instance->ready ? AH_INVALID : validate_locked(instance) ? AH_OK : AH_CORRUPT;
+    xSemaphoreGive(instance->lock); return r;
 }
 
 ah_result_t ah_set_limit(ah_group_t group, size_t bytes)
 {
-    if (!lock || !group_ok(group)) return AH_INVALID;
-    xSemaphoreTake(lock, portMAX_DELAY);
+    ah_instance_t *instance = &instances[0];
+    if (!instance->lock || !group_ok(group)) return AH_INVALID;
+    xSemaphoreTake(instance->lock, portMAX_DELAY);
     ah_result_t r = AH_OK;
-    if (!ready || bytes < reserve() || bytes > maximum()) r = AH_INVALID;
-    else if (bytes < gs[group].live_bytes) r = AH_BUSY;
-    else gs[group].limit_bytes = bytes;
-    xSemaphoreGive(lock); return r;
+    if (!instance->ready || bytes < reserve(instance) || bytes > maximum(instance)) r = AH_INVALID;
+    else if (bytes < instance->gs[group].live_bytes) r = AH_BUSY;
+    else instance->gs[group].limit_bytes = bytes;
+    xSemaphoreGive(instance->lock); return r;
 }
 
 void ah_inject_every(uint32_t n, uint32_t mask)
 {
-    if (!lock) return;
-    xSemaphoreTake(lock, portMAX_DELAY);
-    inject_n = n; inject_mask = mask; memset(inject_count, 0, sizeof(inject_count));
-    xSemaphoreGive(lock);
+    ah_instance_t *instance = &instances[0];
+    if (!instance->lock) return;
+    xSemaphoreTake(instance->lock, portMAX_DELAY);
+    instance->inject_n = n; instance->inject_mask = mask; memset(instance->inject_count, 0, sizeof(instance->inject_count));
+    xSemaphoreGive(instance->lock);
+}
+
+bool ah_init(void)
+{
+    return ah_instance_init(&instances[0]);
+}
+
+ah_result_t ah_reset(ah_policy_t policy)
+{
+    return ah_instance_reset(&instances[0], policy);
+}
+
+ah_result_t ah_alloc(ah_group_t group, size_t bytes, void **out)
+{
+    return ah_instance_alloc(&instances[0], group, bytes, out);
+}
+
+ah_result_t ah_free(ah_group_t group, void *ptr)
+{
+    return ah_instance_free(&instances[0], group, ptr);
+}
+
+ah_result_t ah_get_stats(ah_stats_t *out)
+{
+    return ah_instance_get_stats(&instances[0], out);
 }
 
 bool ah_validate_each_call(void) { return AH_VALIDATE_EACH_CALL != 0; }

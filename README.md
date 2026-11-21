@@ -10,7 +10,7 @@ Dự án triển khai **Adaptive Multi-Heap + Memory QoS + OOM Fault Injection**
 
 ## Thiết kế giải pháp
 
-Allocator quản lý một arena **8192 byte RAM nội**, căn chỉnh 16 byte. Mỗi vùng có danh sách khối trống và danh sách khối đang sử dụng. Cấp phát dùng first-fit, tách phần dư phù hợp; giải phóng gộp các khối trống liền kề.
+Mỗi instance của allocator quản lý một arena **8192 byte RAM nội**, căn chỉnh 16 byte. Mỗi vùng có danh sách khối trống và danh sách khối đang sử dụng. Cấp phát dùng first-fit, tách phần dư phù hợp và gộp các khối trống liền kề khi giải phóng.
 
 | Chính sách | Phân vùng | Cơ chế phục vụ |
 |---|---|---|
@@ -32,6 +32,27 @@ Chi tiết thuật toán, bất biến và giới hạn nằm trong [DESIGN_ADAP
 - ESP-IDF v6.1, target `esp32s3`, cấu hình flash 16 MB và hai lõi.
 - Arena sử dụng RAM nội; bộ thử không yêu cầu PSRAM hoặc camera.
 - VS Code với extension ESP-IDF hoặc terminal đã kích hoạt môi trường ESP-IDF.
+
+### Demo ứng dụng xử lý ảnh và báo nhiệt độ
+
+Web gửi một ảnh xám 160 × 96 pixel xuống ESP32-S3 qua UART. Hai tác vụ xử lý trên lõi 0 và lõi 1 cùng chờ một tín hiệu bắt đầu của FreeRTOS. Mỗi tác vụ dùng một arena 8192 byte để cấp phát ô ảnh đầu ra và bộ đệm nhiệt độ. Hai tác vụ đọc chung ảnh đầu vào được cấp tĩnh bên ngoài hai arena.
+
+Mỗi tác vụ lọc trung vị 7 × 7 rồi dò biên Sobel cho từng ô 16 × 16 pixel. Khi không cấp phát được ô tiếp theo, tác vụ gửi lô đang giữ qua UART. Máy tính xác nhận đã nhận đủ lô của từng chính sách để bo giải phóng buffer và xử lý tiếp. Với **Heap chung**, nhóm ảnh và nhóm nhiệt độ cùng cấp phát từ một vùng. Với **Adaptive Heap**, nhóm ảnh dùng vùng riêng và mượn vùng chung, trong khi nhóm nhiệt độ có vùng dự trữ riêng.
+
+Tác vụ B đọc nhiệt độ chip định kỳ 250 ms và thử tạo bản tin cho từng chính sách còn chạy. Web hiển thị các mẫu bị mất do thiếu bộ đệm và đếm riêng số bản tin gửi được trong lượt. Hai mẫu trước và sau lượt cho thấy trạng thái khi arena đã trống.
+
+Web hiển thị số lõi, độ lệch lúc bắt đầu và thứ tự nhận đủ ảnh. Thời gian nhận đủ ảnh tính từ tín hiệu bắt đầu chung đến xác nhận cuối của từng chính sách, bao gồm thời gian truyền trên một cổng UART dùng chung. Số đo **Lọc + cấp phát** cộng thời gian tạo các lô trên bo. Máy tính kiểm tra cả 60 ô đầu ra của hai chính sách trùng từng pixel.
+
+Từ ESP-IDF Terminal tại thư mục dự án, đóng IDF Monitor và Heap Lab desktop, rồi nạp firmware demo. Thay `COM7` bằng cổng UART của bo nếu cần.
+
+```powershell
+Set-Location -LiteralPath 'B:\OS\os-btl'
+$demoConfig = Join-Path $PWD 'build/camera-demo/sdkconfig'
+idf.py -B build/camera-demo -D "SDKCONFIG=$demoConfig" -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.camera.defaults" -p COM7 flash
+python tools/camera_demo.py --com COM7
+```
+
+Mở [http://127.0.0.1:8765](http://127.0.0.1:8765), dùng ảnh mẫu hoặc chọn một ảnh trên máy, rồi bấm **Chạy so sánh trên bo**. Ảnh mẫu lấy từ ví dụ LCD JPEG trong bản ESP-IDF đã cài khi có biến `IDF_PATH`. Firmware báo `CAMERA_DEMO_READY,3` khi bắt đầu nhận lệnh và dùng 115200 baud. Dùng **Quét lại** sau khi cắm bo.
 
 ### Heap Lab qua UART
 
